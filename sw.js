@@ -59,7 +59,12 @@ self.addEventListener('fetch', event => {
         .then(response => {
           if (!response.ok) throw new Error(`HTTP ${response.status}`);
           const cacheKey = request.mode === 'navigate' ? './index.html' : request;
-          event.waitUntil(caches.open(CACHE_NAME).then(cache => cache.put(cacheKey, response.clone())));
+          // IMPORTANT : cloner tout de suite, de façon synchrone. Si on clone à
+          // l'intérieur du .then() de caches.open() (async), la réponse d'origine
+          // a déjà été transmise au navigateur et son corps est en cours de
+          // lecture -> "Response body is already used" au moment du clone.
+          const responseToCache = response.clone();
+          event.waitUntil(caches.open(CACHE_NAME).then(cache => cache.put(cacheKey, responseToCache)));
           return response;
         })
         .catch(async () => {
