@@ -968,6 +968,34 @@ function normalizeNewsArticle(raw) {
   return { title, link: rawLink, publisher, pubDateValue, ts };
 }
 
+// Repli si Yahoo ne renvoie aucune actualité (endpoint non-officiel, de plus en
+// plus souvent restreint sans cookie+crumb) : on va chercher sur le flux RSS
+// public de Google Actualités, via les mêmes proxys CORS.
+async function fetchNewsFallback(queries) {
+  const perQuery = await MoobankCore.mapWithConcurrency(queries, 2, async query => {
+    const feedUrl = `https://news.google.com/rss/search?q=${encodeURIComponent(query + ' bourse')}&hl=fr&gl=FR&ceid=FR:fr`;
+    for (const proxy of CORS_PROXIES) {
+      try {
+        const response = await fetch(proxy(feedUrl), { signal: AbortSignal.timeout(TIMING_PROXY_FETCH) });
+        if (!response.ok) continue;
+        const text = await response.text();
+        const doc = new DOMParser().parseFromString(text, 'application/xml');
+        if (doc.querySelector('parsererror')) continue;
+        const items = [...doc.querySelectorAll('item')].slice(0, 3);
+        if (!items.length) continue;
+        return items.map(item => ({
+          title: item.querySelector('title')?.textContent || '',
+          link: item.querySelector('link')?.textContent || '',
+          publisher: item.querySelector('source')?.textContent || 'Google Actualités',
+          pubDateValue: item.querySelector('pubDate')?.textContent || '',
+        }));
+      } catch (_) { /* proxy suivant */ }
+    }
+    return [];
+  });
+  return perQuery.flat();
+}
+
 function marketNewsQueries() {
   const ranked = [...positions]
     .sort((a, b) => (Number(b.current) || 0) * (Number(b.qty) || 0) - (Number(a.current) || 0) * (Number(a.qty) || 0))
@@ -987,20 +1015,32 @@ async function loadMarketNews(force = false) {
   marketNewsUserId = currentUser.id;
   element.innerHTML = '<div class="market-news-loading">Chargement des actualités…</div>';
   try {
-    const responses = await MoobankCore.mapWithConcurrency(marketNewsQueries(), 2, async query => {
+    const queries = marketNewsQueries();
+    const responses = await MoobankCore.mapWithConcurrency(queries, 2, async query => {
       const path = `/v1/finance/search?q=${encodeURIComponent(query)}&quotesCount=0&newsCount=3&listsCount=0&lang=fr-FR&region=FR`;
       const data = await yfFetch(path);
-      return data?.news || data?.finance?.result?.[0]?.news || [];
+      const news = data?.news || data?.finance?.result?.[0]?.news || [];
+      console.debug('[Moobank] Yahoo news brut pour', query, '→', news.length, 'item(s)', news[0] || null);
+      return news;
     });
 
-    const seen = new Set();
-    const articles = responses.flat().map(normalizeNewsArticle).filter(article => {
-      const link = safeNewsUrl(article.link);
-      if (!link || !article.title || seen.has(link)) return false;
-      seen.add(link);
-      article._safeLink = link;
-      return true;
-    }).sort((a, b) => b.ts - a.ts).slice(0, 3);
+    const dedupeAndRank = raw => {
+      const seen = new Set();
+      return raw.map(normalizeNewsArticle).filter(article => {
+        const link = safeNewsUrl(article.link);
+        if (!link || !article.title || seen.has(link)) return false;
+        seen.add(link);
+        article._safeLink = link;
+        return true;
+      }).sort((a, b) => b.ts - a.ts).slice(0, 3);
+    };
+
+    let articles = dedupeAndRank(responses.flat());
+
+    if (!articles.length) {
+      console.warn('[Moobank] Yahoo Finance n\'a renvoyé aucune actualité exploitable, repli sur Google Actualités.');
+      articles = dedupeAndRank(await fetchNewsFallback(queries));
+    }
 
     if (!articles.length) throw new Error('Aucune actualité disponible');
     element.innerHTML = `<div class="market-news-list">${articles.map(article => {
