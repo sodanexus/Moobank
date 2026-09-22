@@ -931,10 +931,41 @@ function safeNewsUrl(rawUrl) {
   }
 }
 
-function marketNewsDate(timestamp) {
-  const date = new Date(Number(timestamp) * 1000);
+function marketNewsDate(value) {
+  let date;
+  if (value == null || value === '') return '';
+  if (typeof value === 'number' || /^\d+$/.test(String(value))) {
+    // Timestamp Unix en secondes (ancien format Yahoo)
+    date = new Date(Number(value) * 1000);
+  } else {
+    // Chaîne ISO (nouveau format Yahoo: content.pubDate)
+    date = new Date(value);
+  }
   if (!Number.isFinite(date.getTime())) return '';
   return date.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
+}
+
+// Yahoo a changé la structure de ses articles d'actualité : les champs sont
+// désormais imbriqués sous `content` (content.title, content.canonicalUrl.url,
+// content.provider.displayName, content.pubDate) au lieu d'être à plat
+// (title, link, publisher, providerPublishTime). On gère les deux formats.
+function normalizeNewsArticle(raw) {
+  const content = raw?.content && typeof raw.content === 'object' ? raw.content : null;
+  const title = String((content?.title ?? raw?.title) || '').trim();
+  const rawLink = content
+    ? (content.clickThroughUrl?.url || content.canonicalUrl?.url || raw?.link)
+    : raw?.link;
+  const publisher = String((content?.provider?.displayName ?? raw?.publisher) || '').trim();
+  const pubDateValue = content ? (content.pubDate ?? content.displayTime) : raw?.providerPublishTime;
+  const ts = (() => {
+    if (pubDateValue == null || pubDateValue === '') return 0;
+    if (typeof pubDateValue === 'number' || /^\d+$/.test(String(pubDateValue))) {
+      return Number(pubDateValue) * 1000;
+    }
+    const parsed = Date.parse(pubDateValue);
+    return Number.isFinite(parsed) ? parsed : 0;
+  })();
+  return { title, link: rawLink, publisher, pubDateValue, ts };
 }
 
 function marketNewsQueries() {
@@ -963,19 +994,18 @@ async function loadMarketNews(force = false) {
     });
 
     const seen = new Set();
-    const articles = responses.flat().filter(article => {
-      const link = safeNewsUrl(article?.link);
-      const title = String(article?.title || '').trim();
-      if (!link || !title || seen.has(link)) return false;
+    const articles = responses.flat().map(normalizeNewsArticle).filter(article => {
+      const link = safeNewsUrl(article.link);
+      if (!link || !article.title || seen.has(link)) return false;
       seen.add(link);
       article._safeLink = link;
       return true;
-    }).sort((a, b) => Number(b.providerPublishTime || 0) - Number(a.providerPublishTime || 0)).slice(0, 3);
+    }).sort((a, b) => b.ts - a.ts).slice(0, 3);
 
     if (!articles.length) throw new Error('Aucune actualité disponible');
     element.innerHTML = `<div class="market-news-list">${articles.map(article => {
-      const publisher = String(article.publisher || 'Yahoo Finance').trim();
-      const date = marketNewsDate(article.providerPublishTime);
+      const publisher = article.publisher || 'Yahoo Finance';
+      const date = marketNewsDate(article.pubDateValue);
       return `<a class="market-news-item" href="${_esc(article._safeLink)}" target="_blank" rel="noopener noreferrer">
         <span class="market-news-copy">
           <span class="market-news-title">${_esc(article.title)}</span>
