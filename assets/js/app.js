@@ -758,14 +758,14 @@ const CORS_PROXIES = [
 
 const waitForQuoteRetry = ms => new Promise(resolve => setTimeout(resolve, ms));
 
-async function parseYahooResponse(response) {
-  if (!response.ok) throw new Error(`Yahoo HTTP ${response.status}`);
+async function parseProxiedJson(response) {
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
   const text = await response.text();
   let json;
   try {
     json = JSON.parse(text);
   } catch (_) {
-    throw new Error('Réponse Yahoo non JSON');
+    throw new Error('Réponse non JSON');
   }
   if (typeof json?.contents === 'string') {
     try { json = JSON.parse(json.contents); }
@@ -792,7 +792,7 @@ async function yfFetch(path) {
       for (let attempt = 1; attempt <= provider.attempts; attempt++) {
         try {
           const response = await fetch(provider.url, { signal: AbortSignal.timeout(TIMING_PROXY_FETCH) });
-          return await parseYahooResponse(response);
+          return await parseProxiedJson(response);
         } catch (error) {
           lastError = error;
           if (attempt < provider.attempts) await waitForQuoteRetry(450 * (2 ** (attempt - 1)) + Math.round(Math.random() * 180));
@@ -916,11 +916,12 @@ async function searchTickers(query, seq) {
   } catch(e) { console.error('searchTickers ERROR:', e.message, e.stack); return null; }
 }
 
-// ─── ACTUALITÉS LIÉES AU PORTEFEUILLE ──────────────────────────────────────
+// ─── FIL REDDIT r/vosfinances ───────────────────────────────────────────────
 const MARKET_NEWS_TTL = 15 * 60 * 1000;
 let marketNewsLoadedAt = 0;
 let marketNewsLoading = false;
 let marketNewsUserId = null;
+const REDDIT_SUBREDDIT = 'vosfinances';
 
 function safeNewsUrl(rawUrl) {
   try {
@@ -932,77 +933,37 @@ function safeNewsUrl(rawUrl) {
 }
 
 function marketNewsDate(value) {
-  let date;
   if (value == null || value === '') return '';
-  if (typeof value === 'number' || /^\d+$/.test(String(value))) {
-    // Timestamp Unix en secondes (ancien format Yahoo)
-    date = new Date(Number(value) * 1000);
-  } else {
-    // Chaîne ISO (nouveau format Yahoo: content.pubDate)
-    date = new Date(value);
-  }
+  // created_utc de Reddit est un timestamp Unix en secondes
+  const date = new Date(Number(value) * 1000);
   if (!Number.isFinite(date.getTime())) return '';
   return date.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
 }
 
-// Yahoo a changé la structure de ses articles d'actualité : les champs sont
-// désormais imbriqués sous `content` (content.title, content.canonicalUrl.url,
-// content.provider.displayName, content.pubDate) au lieu d'être à plat
-// (title, link, publisher, providerPublishTime). On gère les deux formats.
-function normalizeNewsArticle(raw) {
-  const content = raw?.content && typeof raw.content === 'object' ? raw.content : null;
-  const title = String((content?.title ?? raw?.title) || '').trim();
-  const rawLink = content
-    ? (content.clickThroughUrl?.url || content.canonicalUrl?.url || raw?.link)
-    : raw?.link;
-  const publisher = String((content?.provider?.displayName ?? raw?.publisher) || '').trim();
-  const pubDateValue = content ? (content.pubDate ?? content.displayTime) : raw?.providerPublishTime;
-  const ts = (() => {
-    if (pubDateValue == null || pubDateValue === '') return 0;
-    if (typeof pubDateValue === 'number' || /^\d+$/.test(String(pubDateValue))) {
-      return Number(pubDateValue) * 1000;
+// Le JSON public de Reddit (www.reddit.com/r/.../.json) n'envoie pas d'en-têtes
+// CORS pour les appels depuis un navigateur : on passe donc par les mêmes
+// proxys CORS que pour Yahoo.
+async function fetchRedditPosts(limit = 6) {
+  const feedUrl = `https://www.reddit.com/r/${REDDIT_SUBREDDIT}/.json?limit=${limit}&raw_json=1`;
+  for (const proxy of CORS_PROXIES) {
+    try {
+      const response = await fetch(proxy(feedUrl), { signal: AbortSignal.timeout(TIMING_PROXY_FETCH) });
+      const json = await parseProxiedJson(response);
+      const children = json?.data?.children || [];
+      if (!children.length) continue;
+      return children.map(({ data: post }) => ({
+        title: String(post?.title || '').trim(),
+        link: safeNewsUrl(`https://www.reddit.com${post?.permalink || ''}`),
+        publisher: post?.author ? `u/${post.author}` : 'r/vosfinances',
+        score: Number(post?.score) || 0,
+        comments: Number(post?.num_comments) || 0,
+        createdUtc: post?.created_utc,
+      })).filter(post => post.link && post.title);
+    } catch (error) {
+      console.debug('[Moobank] proxy Reddit en échec, essai suivant:', error.message);
     }
-    const parsed = Date.parse(pubDateValue);
-    return Number.isFinite(parsed) ? parsed : 0;
-  })();
-  return { title, link: rawLink, publisher, pubDateValue, ts };
-}
-
-// Repli si Yahoo ne renvoie aucune actualité (endpoint non-officiel, de plus en
-// plus souvent restreint sans cookie+crumb) : on va chercher sur le flux RSS
-// public de Google Actualités, via les mêmes proxys CORS.
-async function fetchNewsFallback(queries) {
-  const perQuery = await MoobankCore.mapWithConcurrency(queries, 2, async query => {
-    const feedUrl = `https://news.google.com/rss/search?q=${encodeURIComponent(query + ' bourse')}&hl=fr&gl=FR&ceid=FR:fr`;
-    for (const proxy of CORS_PROXIES) {
-      try {
-        const response = await fetch(proxy(feedUrl), { signal: AbortSignal.timeout(TIMING_PROXY_FETCH) });
-        if (!response.ok) continue;
-        const text = await response.text();
-        const doc = new DOMParser().parseFromString(text, 'application/xml');
-        if (doc.querySelector('parsererror')) continue;
-        const items = [...doc.querySelectorAll('item')].slice(0, 3);
-        if (!items.length) continue;
-        return items.map(item => ({
-          title: item.querySelector('title')?.textContent || '',
-          link: item.querySelector('link')?.textContent || '',
-          publisher: item.querySelector('source')?.textContent || 'Google Actualités',
-          pubDateValue: item.querySelector('pubDate')?.textContent || '',
-        }));
-      } catch (_) { /* proxy suivant */ }
-    }
-    return [];
-  });
-  return perQuery.flat();
-}
-
-function marketNewsQueries() {
-  const ranked = [...positions]
-    .sort((a, b) => (Number(b.current) || 0) * (Number(b.qty) || 0) - (Number(a.current) || 0) * (Number(a.qty) || 0))
-    .map(position => String(position.symbol || '').trim())
-    .filter(Boolean);
-  const unique = [...new Set(ranked)].slice(0, 3);
-  return unique.length ? unique : ['marchés financiers France'];
+  }
+  return [];
 }
 
 async function loadMarketNews(force = false) {
@@ -1013,51 +974,33 @@ async function loadMarketNews(force = false) {
 
   marketNewsLoading = true;
   marketNewsUserId = currentUser.id;
-  element.innerHTML = '<div class="market-news-loading">Chargement des actualités…</div>';
+  element.innerHTML = '<div class="market-news-loading">Chargement du fil r/vosfinances…</div>';
   try {
-    const queries = marketNewsQueries();
-    const responses = await MoobankCore.mapWithConcurrency(queries, 2, async query => {
-      const path = `/v1/finance/search?q=${encodeURIComponent(query)}&quotesCount=0&newsCount=3&listsCount=0&lang=fr-FR&region=FR`;
-      const data = await yfFetch(path);
-      const news = data?.news || data?.finance?.result?.[0]?.news || [];
-      console.debug('[Moobank] Yahoo news brut pour', query, '→', news.length, 'item(s)', news[0] || null);
-      return news;
-    });
+    const posts = await fetchRedditPosts(6);
 
-    const dedupeAndRank = raw => {
-      const seen = new Set();
-      return raw.map(normalizeNewsArticle).filter(article => {
-        const link = safeNewsUrl(article.link);
-        if (!link || !article.title || seen.has(link)) return false;
-        seen.add(link);
-        article._safeLink = link;
-        return true;
-      }).sort((a, b) => b.ts - a.ts).slice(0, 3);
-    };
+    const seen = new Set();
+    const articles = posts.filter(post => {
+      if (seen.has(post.link)) return false;
+      seen.add(post.link);
+      return true;
+    }).slice(0, 6);
 
-    let articles = dedupeAndRank(responses.flat());
-
-    if (!articles.length) {
-      console.warn('[Moobank] Yahoo Finance n\'a renvoyé aucune actualité exploitable, repli sur Google Actualités.');
-      articles = dedupeAndRank(await fetchNewsFallback(queries));
-    }
-
-    if (!articles.length) throw new Error('Aucune actualité disponible');
+    if (!articles.length) throw new Error('Fil Reddit indisponible');
     element.innerHTML = `<div class="market-news-list">${articles.map(article => {
-      const publisher = article.publisher || 'Yahoo Finance';
-      const date = marketNewsDate(article.pubDateValue);
-      return `<a class="market-news-item" href="${_esc(article._safeLink)}" target="_blank" rel="noopener noreferrer">
+      const date = marketNewsDate(article.createdUtc);
+      const meta = `${_esc(article.publisher)} · ↑${article.score} · 💬${article.comments}${date ? ` · ${_esc(date)}` : ''}`;
+      return `<a class="market-news-item" href="${_esc(article.link)}" target="_blank" rel="noopener noreferrer">
         <span class="market-news-copy">
           <span class="market-news-title">${_esc(article.title)}</span>
-          <span class="market-news-meta">${_esc(publisher)}${date ? ` · ${_esc(date)}` : ''}</span>
+          <span class="market-news-meta">${meta}</span>
         </span>
         <span class="market-news-arrow" aria-hidden="true">↗</span>
       </a>`;
     }).join('')}</div>`;
     marketNewsLoadedAt = Date.now();
   } catch (error) {
-    console.warn('[Moobank] actualités indisponibles:', error.message);
-    element.innerHTML = '<div class="market-news-empty"><span>Actualités momentanément indisponibles.<button type="button" class="market-news-retry" onclick="loadMarketNews(true)">Réessayer</button></span></div>';
+    console.warn('[Moobank] fil r/vosfinances indisponible:', error.message);
+    element.innerHTML = '<div class="market-news-empty"><span>Fil r/vosfinances momentanément indisponible.<button type="button" class="market-news-retry" onclick="loadMarketNews(true)">Réessayer</button></span></div>';
   } finally {
     marketNewsLoading = false;
   }
