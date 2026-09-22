@@ -119,7 +119,7 @@ function switchTab(name, btn) {
       btn.setAttribute('aria-selected', 'true');
     }
     currentTabName = name;
-    if (name === 'overview') loadMarketNews();
+    if (name === 'overview') renderDailyMovers();
     if (name === 'details') { renderAccounts(); renderPositions(); renderPrelevements(); }
     if (name === 'simulator') {
       renderGoals();
@@ -752,8 +752,9 @@ const yfInFlight = new Map();
 
 const CORS_PROXIES = [
   url => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`,
-  url => `https://corsproxy.io/?url=${encodeURIComponent(url)}`,
   url => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+  // corsproxy.io exige désormais une clé API pour l'usage gratuit (401) : en dernier recours seulement
+  url => `https://corsproxy.io/?url=${encodeURIComponent(url)}`,
 ];
 
 const waitForQuoteRetry = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -916,94 +917,45 @@ async function searchTickers(query, seq) {
   } catch(e) { console.error('searchTickers ERROR:', e.message, e.stack); return null; }
 }
 
-// ─── FIL REDDIT r/vosfinances ───────────────────────────────────────────────
-const MARKET_NEWS_TTL = 15 * 60 * 1000;
-let marketNewsLoadedAt = 0;
-let marketNewsLoading = false;
-let marketNewsUserId = null;
-const REDDIT_SUBREDDIT = 'vosfinances';
-
-function safeNewsUrl(rawUrl) {
-  try {
-    const url = new URL(String(rawUrl || ''));
-    return ['https:', 'http:'].includes(url.protocol) ? url.href : null;
-  } catch (_) {
-    return null;
-  }
-}
-
-function marketNewsDate(value) {
-  if (value == null || value === '') return '';
-  // created_utc de Reddit est un timestamp Unix en secondes
-  const date = new Date(Number(value) * 1000);
-  if (!Number.isFinite(date.getTime())) return '';
-  return date.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
-}
-
-// Le JSON public de Reddit (www.reddit.com/r/.../.json) n'envoie pas d'en-têtes
-// CORS pour les appels depuis un navigateur : on passe donc par les mêmes
-// proxys CORS que pour Yahoo.
-async function fetchRedditPosts(limit = 6) {
-  const feedUrl = `https://www.reddit.com/r/${REDDIT_SUBREDDIT}/.json?limit=${limit}&raw_json=1`;
-  for (const proxy of CORS_PROXIES) {
-    try {
-      const response = await fetch(proxy(feedUrl), { signal: AbortSignal.timeout(TIMING_PROXY_FETCH) });
-      const json = await parseProxiedJson(response);
-      const children = json?.data?.children || [];
-      if (!children.length) continue;
-      return children.map(({ data: post }) => ({
-        title: String(post?.title || '').trim(),
-        link: safeNewsUrl(`https://www.reddit.com${post?.permalink || ''}`),
-        publisher: post?.author ? `u/${post.author}` : 'r/vosfinances',
-        score: Number(post?.score) || 0,
-        comments: Number(post?.num_comments) || 0,
-        createdUtc: post?.created_utc,
-      })).filter(post => post.link && post.title);
-    } catch (error) {
-      console.debug('[Moobank] proxy Reddit en échec, essai suivant:', error.message);
-    }
-  }
-  return [];
-}
-
-async function loadMarketNews(force = false) {
+// ─── MOUVEMENTS DU JOUR ─────────────────────────────────────────────────────
+// Classement des positions du portefeuille qui bougent le plus aujourd'hui
+// (variation en %), calculé uniquement à partir des cours déjà récupérés par
+// refreshAllPrices() pour le reste de l'app. Aucun appel réseau, aucun proxy,
+// aucune dépendance externe : ce bloc ne peut pas tomber en panne à part.
+function renderDailyMovers() {
   const element = document.getElementById('marketNewsContent');
-  if (!element || marketNewsLoading || !currentUser) return;
-  const sameUser = marketNewsUserId === currentUser.id;
-  if (!force && sameUser && Date.now() - marketNewsLoadedAt < MARKET_NEWS_TTL) return;
+  if (!element) return;
 
-  marketNewsLoading = true;
-  marketNewsUserId = currentUser.id;
-  element.innerHTML = '<div class="market-news-loading">Chargement du fil r/vosfinances…</div>';
-  try {
-    const posts = await fetchRedditPosts(6);
+  // Une même valeur peut être détenue sur plusieurs comptes : on ne la
+  // compte qu'une fois dans le classement.
+  const bySymbol = new Map();
+  positions.forEach(p => {
+    if (!Number.isFinite(p.changePercent) || !p.changePercent) return;
+    if (!bySymbol.has(p.symbol)) bySymbol.set(p.symbol, p);
+  });
 
-    const seen = new Set();
-    const articles = posts.filter(post => {
-      if (seen.has(post.link)) return false;
-      seen.add(post.link);
-      return true;
-    }).slice(0, 6);
+  const ranked = [...bySymbol.values()]
+    .sort((a, b) => Math.abs(b.changePercent) - Math.abs(a.changePercent))
+    .slice(0, 5);
 
-    if (!articles.length) throw new Error('Fil Reddit indisponible');
-    element.innerHTML = `<div class="market-news-list">${articles.map(article => {
-      const date = marketNewsDate(article.createdUtc);
-      const meta = `${_esc(article.publisher)} · ↑${article.score} · 💬${article.comments}${date ? ` · ${_esc(date)}` : ''}`;
-      return `<a class="market-news-item" href="${_esc(article.link)}" target="_blank" rel="noopener noreferrer">
-        <span class="market-news-copy">
-          <span class="market-news-title">${_esc(article.title)}</span>
-          <span class="market-news-meta">${meta}</span>
-        </span>
-        <span class="market-news-arrow" aria-hidden="true">↗</span>
-      </a>`;
-    }).join('')}</div>`;
-    marketNewsLoadedAt = Date.now();
-  } catch (error) {
-    console.warn('[Moobank] fil r/vosfinances indisponible:', error.message);
-    element.innerHTML = '<div class="market-news-empty"><span>Fil r/vosfinances momentanément indisponible.<button type="button" class="market-news-retry" onclick="loadMarketNews(true)">Réessayer</button></span></div>';
-  } finally {
-    marketNewsLoading = false;
+  if (!ranked.length) {
+    element.innerHTML = '<div class="market-news-empty"><span>Pas encore de variation à afficher aujourd’hui.</span></div>';
+    return;
   }
+
+  element.innerHTML = `<div class="market-news-list">${ranked.map(p => {
+    const up = p.changePercent >= 0;
+    const color = up ? 'var(--gain)' : 'var(--loss)';
+    const pct = `${up ? '+' : ''}${_fmtPct.format(p.changePercent)}%`;
+    const changeAbs = Number.isFinite(p.change) ? `${up ? '+' : ''}${fmtEur(p.change)}` : '';
+    return `<div class="market-news-item">
+      <span class="market-news-copy">
+        <span class="market-news-title">${_esc(p.symbol)}${p.name ? ` · ${_esc(p.name)}` : ''}</span>
+        <span class="market-news-meta">${Number.isFinite(p.current) ? fmtEur(p.current) : ''}${changeAbs ? ` · ${_esc(changeAbs)}` : ''}</span>
+      </span>
+      <span class="market-news-arrow" style="color:${color};font-weight:600;font-family:'DM Mono',monospace">${pct}</span>
+    </div>`;
+  }).join('')}</div>`;
 }
 
 // ─── TICKER INPUT ─────────────────────────────────────────────────────────────
@@ -2057,6 +2009,7 @@ function refreshProjectionIfActive() {
 function renderAll() {
   renderAccounts(); renderPositions(); renderAllocation();
   renderSummary(); renderFilterToggles(); renderChart();
+  renderDailyMovers();
   refreshProjectionIfActive();
 }
 
@@ -2971,8 +2924,6 @@ function clearLoadedSession() {
   simContributionPlan = {};
   simContributionPlanUserId = null;
   _simControlsSignature = null;
-  marketNewsLoadedAt = 0;
-  marketNewsUserId = null;
   positionHistory = {};
   clearInterval(_priceRefreshInterval); _priceRefreshInterval = null;
   clearInterval(_eurUsdInterval); _eurUsdInterval = null;
@@ -3040,7 +2991,6 @@ function initApp(user) {
       renderGoals();
       persistDataCache(currentUser.id, loaded);
       fetchEurUsd();
-      loadMarketNews();
       _eurUsdInterval = setInterval(() => { if (_appReadyTask === task) fetchEurUsd(); }, 5 * 60 * 1000);
       if (positions.length > 0) {
         refreshAllPrices();
