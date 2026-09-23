@@ -61,15 +61,15 @@ test('la nouvelle identité transparente est utilisée par le site et la PWA', (
   assert.equal(JSON.parse(read('version.json')).version, '2.5.0');
 });
 
-test('la synthèse remplace le doublon des poches par trois actualités non bloquantes', () => {
+test('la synthèse remplace le doublon des poches par le classement des mouvements du jour', () => {
   const html = read('index.html');
   const app = read('assets/js/app.js');
   assert.match(html, /class="card market-news-card"/);
   assert.match(html, /id="marketNewsContent"/);
   assert.doesNotMatch(html, /id="byAccountContent"|id="accountCountBadge"/);
-  assert.match(app, /newsCount=3/);
-  assert.match(app, /slice\(0, 3\)/);
-  assert.match(app, /actualités indisponibles/);
+  assert.match(app, /renderDailyMovers/);
+  assert.match(app, /slice\(0, 5\)/);
+  assert.match(app, /Pas encore de variation à afficher aujourd’hui/);
 });
 
 test('la navigation et les actions suivent la nouvelle hiérarchie responsive', () => {
