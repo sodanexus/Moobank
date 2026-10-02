@@ -91,6 +91,21 @@ function assertFiniteAmount(value, label, minimum = 0) {
   return number;
 }
 
+function transactionCashImpact(transaction) {
+  const fees = Number(transaction.fees) || 0;
+  const tradeAmount = Number(transaction.qty) * Number(transaction.price);
+  if (transaction.type === 'buy') return -(tradeAmount + fees);
+  if (transaction.type === 'sell') return tradeAmount - fees;
+  if (transaction.type === 'edit') {
+    const oldQty = Number(transaction.old_qty);
+    const oldPrice = Number(transaction.old_price);
+    if (Number.isFinite(oldQty) && Number.isFinite(oldPrice)) return oldQty * oldPrice - tradeAmount;
+  }
+  if (['deposit', 'dividend', 'interest'].includes(transaction.type)) return Number(transaction.amount) || 0;
+  if (['withdrawal', 'fee'].includes(transaction.type)) return -(Number(transaction.amount) || 0);
+  return 0;
+}
+
 async function mapWithConcurrency(items, limit, mapper) {
   const list = Array.from(items || []);
   const results = new Array(list.length);
@@ -213,7 +228,7 @@ async function quoteInEur(symbol) {
 async function snapshotUser(userId) {
   const { data: accounts = [] } = await runSupabase('accounts', () => sb
     .from('accounts')
-    .select('id, type, solde')
+    .select('id, name, type, solde')
     .eq('user_id', userId));
 
   accounts.forEach(account => {
@@ -231,6 +246,11 @@ async function snapshotUser(userId) {
   const { data: positions = [] } = await runSupabase('positions', () => sb
     .from('positions')
     .select('symbol, qty, account_id')
+    .eq('user_id', userId));
+
+  const { data: transactions = [] } = await runSupabase('transactions', () => sb
+    .from('transactions')
+    .select('type, account_id, account_name, qty, price, amount, fees, old_qty, old_price')
     .eq('user_id', userId));
 
   positions.forEach(position => {
@@ -261,7 +281,26 @@ async function snapshotUser(userId) {
     marketTotal += quotes.get(symbol).priceEur * qty;
   }
 
-  const totalValue = Math.round((marketTotal + fixedTotal) * 100) / 100;
+  const accountIds = new Set(accounts.map(account => account.id));
+  const accountIdsByName = new Map();
+  accounts.forEach(account => {
+    const key = String(account.name || '').trim();
+    if (!key) return;
+    const matches = accountIdsByName.get(key) || [];
+    matches.push(account.id);
+    accountIdsByName.set(key, matches);
+  });
+  const cashTotal = transactions.reduce((sum, transaction) => {
+    const matchingIds = accountIdsByName.get(String(transaction.account_name || '').trim()) || [];
+    const accountId = transaction.account_id || (matchingIds.length === 1 ? matchingIds[0] : null);
+    // Les lignes dont le compte reste ambigu ne participent pas au solde.
+    if (!accountId || !accountIds.has(accountId)) return sum;
+    const impact = transactionCashImpact(transaction);
+    if (!Number.isFinite(impact)) throw new Error('transactions: montant invalide');
+    return sum + impact;
+  }, 0);
+
+  const totalValue = Math.round((marketTotal + fixedTotal + cashTotal) * 100) / 100;
   assertFiniteAmount(totalValue, 'patrimoine total');
   const { data: saved } = await runSupabase('patrimoine_history', () => sb
     .from('patrimoine_history')
@@ -276,7 +315,7 @@ async function snapshotUser(userId) {
   }
 
   console.log(`✓ ${userId.slice(0, 8)}… → ${totalValue.toLocaleString('fr-FR')} € (${today})`);
-  console.log(`  marché : ${Math.round(marketTotal).toLocaleString('fr-FR')} € | fixe : ${Math.round(fixedTotal).toLocaleString('fr-FR')} €`);
+  console.log(`  marché : ${Math.round(marketTotal).toLocaleString('fr-FR')} € | fixe : ${Math.round(fixedTotal).toLocaleString('fr-FR')} € | liquidités : ${Math.round(cashTotal).toLocaleString('fr-FR')} €`);
 }
 
 async function main() {

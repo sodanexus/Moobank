@@ -155,12 +155,16 @@
     </div>
     <div class="wealth-metrics">
       <div class="wealth-metric">
-        <div class="wealth-metric-label">Capital investi</div>
+        <div class="wealth-metric-label">Apports nets</div>
         <div class="wealth-metric-value" id="capitalInvested">—</div>
       </div>
       <div class="wealth-metric">
-        <div class="wealth-metric-label">Plus-value latente</div>
+        <div class="wealth-metric-label">Performance des actifs</div>
         <div class="wealth-metric-value" id="totalPnl">—</div>
+      </div>
+      <div class="wealth-metric">
+        <div class="wealth-metric-label">Liquidités disponibles</div>
+        <div class="wealth-metric-value" id="cashAvailable">—</div>
       </div>
       <div class="wealth-metric">
         <div class="wealth-metric-label" id="periodVarLabel">Variation globale · 1 sem.</div>
@@ -248,6 +252,7 @@
       <div style="display:flex;gap:0;flex:1;border-bottom:1px solid var(--border);margin-bottom:-1px">
         <button id="tab-pos-btn" class="tab-btn active" style="border-bottom:2px solid var(--accent);color:var(--accent);margin-bottom:-1px" onclick="switchPosTab('pos')">Positions</button>
         <button id="tab-pos-tx-btn" class="tab-btn" style="border-bottom:2px solid transparent;margin-bottom:-1px" onclick="switchPosTab('tx')">Mouvements</button>
+        <button class="btn btn-sm" onclick="openCashTransaction()">+ Flux</button>
       </div>
       <button class="btn btn-sm" id="refreshBtn" onclick="refreshAllPrices()" style="flex-shrink:0;margin-bottom:0">↻ <span id="updateBadge">Actualiser</span></button>
     </div>
@@ -639,10 +644,48 @@
       <input type="number" id="pos-price" placeholder="ex: 180.50" step="any" min="0">
       <div class="form-hint" id="pos-price-hint">Le PRU sera recalculé si la position existe déjà</div>
     </div>
+    <div class="form-row">
+      <label for="pos-fees">Frais (€)</label>
+      <input type="number" id="pos-fees" placeholder="0" step="0.01" min="0">
+      <div class="form-hint">Intégrés au PRU à l’achat et déduits des liquidités.</div>
+    </div>
 
     <div class="form-actions">
       <button type="button" class="btn" onclick="closeModal('position')">Annuler</button>
       <button type="button" class="btn btn-primary" id="addPosBtn" onclick="confirmPosition()" disabled>Valider</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL FLUX DE TRÉSORERIE -->
+<div class="modal-overlay" id="cashModal" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="cashModalTitle" onclick="if(event.target===this)closeModal('cash')">
+  <div class="modal">
+    <div class="modal-title" id="cashModalTitle">Ajouter un flux de trésorerie</div>
+    <div class="form-row">
+      <label for="cash-account">Compte de marché</label>
+      <select id="cash-account"><option value="">— choisir —</option></select>
+    </div>
+    <div class="form-row">
+      <label for="cash-type">Nature du flux</label>
+      <select id="cash-type">
+        <option value="deposit">Versement</option>
+        <option value="withdrawal">Retrait</option>
+        <option value="dividend">Dividende</option>
+        <option value="interest">Intérêt</option>
+        <option value="fee">Frais</option>
+      </select>
+    </div>
+    <div class="form-row">
+      <label for="cash-amount">Montant (€)</label>
+      <input type="number" id="cash-amount" placeholder="ex: 500" step="0.01" min="0">
+    </div>
+    <div class="form-row">
+      <label for="cash-name">Libellé <span style="color:var(--muted)">(facultatif)</span></label>
+      <input type="text" id="cash-name" placeholder="ex: Versement mensuel">
+    </div>
+    <div class="form-actions">
+      <button type="button" class="btn" onclick="closeModal('cash')">Annuler</button>
+      <button type="button" class="btn btn-primary" id="cashSaveBtn" onclick="saveCashTransaction()">Enregistrer</button>
     </div>
   </div>
 </div>
