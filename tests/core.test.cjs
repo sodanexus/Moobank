@@ -143,3 +143,113 @@ test('une position supprimée pendant le refresh est retirée sans écraser les 
     id: 'a', qty: 4, price: 12, current: 14, change: 1, changePercent: 7.7, lastUpdated: 1234,
   });
 });
+
+test('la performance neutralise les versements quand le capital investi est connu', () => {
+  const perf = core.periodPerformance(
+    { value: 10000, invested: 10000 },
+    { value: 10920, invested: 10510 },
+  );
+  assert.equal(perf.exact, true);
+  assert.equal(Math.round(perf.gain * 100) / 100, 410);
+  assert.equal(perf.netFlow, 510);
+  assert.ok(Math.abs(perf.pct - 4.0) < 0.1);
+});
+
+test('sans capital investi au départ, la variation brute est marquée inexacte', () => {
+  const perf = core.periodPerformance({ value: 10000 }, { value: 10920, invested: 10510 });
+  assert.equal(perf.exact, false);
+  assert.equal(perf.gain, 920);
+  assert.equal(perf.netFlow, null);
+});
+
+test('limite connue : vendre une position en plus-value retire cette plus-value du calcul', () => {
+  // Vente de 20 % d'une position (valeur 10 000 €, coût 9 000 €) : la plus-value
+  // réalisée (200 €) sort de la plus-value latente, car seuls les coûts sont suivis.
+  // Un suivi exact des ventes demanderait des flux datés (étape ultérieure).
+  const perf = core.periodPerformance(
+    { value: 10000, invested: 9000 },
+    { value: 8000, invested: 7200 },
+  );
+  assert.equal(perf.exact, true);
+  assert.equal(Math.round(perf.gain), -200);
+});
+
+test('le capital investi retombe sur la valeur actuelle sans PRU', () => {
+  assert.equal(core.positionInvested(10, 100, 120), 1000);
+  assert.equal(core.positionInvested(10, 0, 120), 1200);
+  assert.equal(core.positionInvested(0, 100, 120), 0);
+});
+
+test('la validation accepte un historique avec ou sans capital investi', () => {
+  const base = { user_id: 'u1', date: '2026-10-02', value: 1000 };
+  assert.doesNotThrow(() => core.validateHistoryRecord(base));
+  assert.doesNotThrow(() => core.validateHistoryRecord({ ...base, invested: 900 }));
+  assert.throws(() => core.validateHistoryRecord({ ...base, invested: -1 }));
+});
+
+test('la reconstitution retrouve le capital investi avant et après une édition de PRU', () => {
+  const pru = 10510 / 105;
+  const result = core.reconstructInvestedHistory({
+    accounts: [{ id: 'a1', name: 'PEA', type: 'PEA' }],
+    positions: [{ accountId: 'a1', symbol: 'SP500', qty: 105, price: pru, current: 104 }],
+    transactions: [{
+      type: 'edit', symbol: 'SP500', accountName: 'PEA',
+      qty: 105, price: pru, oldQty: 100, oldPrice: 100,
+      ts: Date.parse('2026-09-15T12:00:00Z'),
+    }],
+    history: [
+      { date: '2026-09-10', value: 10000 },
+      { date: '2026-09-20', value: 10920 },
+    ],
+  });
+  assert.equal(result.stoppedAt, null);
+  assert.deepEqual(Array.from(result.points).map(p => [p.date, p.invested]), [
+    ['2026-09-10', 10000],
+    ['2026-09-20', 10510],
+  ]);
+});
+
+test('la reconstitution annule un achat et restitue le coût d’une vente partielle', () => {
+  // État actuel : 80 parts à PRU 100 (8 000 €). Avant : 100 parts (10 000 €), vendues 20, après un achat de 10 à 90.
+  const result = core.reconstructInvestedHistory({
+    accounts: [{ id: 'a1', name: 'CTO', type: 'CTO' }],
+    positions: [{ accountId: 'a1', symbol: 'X', qty: 80, price: 100, current: 110 }],
+    transactions: [
+      { type: 'sell', symbol: 'X', accountName: 'CTO', qty: 20, price: 120, ts: Date.parse('2026-09-18T10:00:00Z') },
+    ],
+    history: [{ date: '2026-09-17', value: 11000 }, { date: '2026-09-19', value: 8800 }],
+  });
+  assert.deepEqual(Array.from(result.points).map(p => [p.date, p.invested]), [
+    ['2026-09-17', 10000],
+    ['2026-09-19', 8000],
+  ]);
+});
+
+test('la reconstitution ne touche pas aux points déjà renseignés et inclut les soldes fixes', () => {
+  const result = core.reconstructInvestedHistory({
+    accounts: [
+      { id: 'a1', name: 'PEA', type: 'PEA' },
+      { id: 'a2', name: 'Livret A', type: 'Livret A', solde: 5000 },
+    ],
+    positions: [{ accountId: 'a1', symbol: 'X', qty: 10, price: 100, current: 100 }],
+    transactions: [],
+    history: [
+      { date: '2026-09-01', value: 6000, invested: 5900 },
+      { date: '2026-09-02', value: 6100 },
+    ],
+  });
+  assert.deepEqual(Array.from(result.points).map(p => [p.date, p.invested]), [['2026-09-02', 6000]]);
+});
+
+test('la reconstitution s’arrête devant une vente totale au PRU inconnu', () => {
+  const result = core.reconstructInvestedHistory({
+    accounts: [{ id: 'a1', name: 'PEA', type: 'PEA' }],
+    positions: [{ accountId: 'a1', symbol: 'Y', qty: 10, price: 50, current: 55 }],
+    transactions: [
+      { type: 'sell', symbol: 'GONE', accountName: 'PEA', qty: 5, price: 20, ts: Date.parse('2026-09-10T10:00:00Z') },
+    ],
+    history: [{ date: '2026-09-05', value: 900 }, { date: '2026-09-12', value: 550 }],
+  });
+  assert.equal(result.stoppedAt, '2026-09-10');
+  assert.deepEqual(Array.from(result.points).map(p => p.date), ['2026-09-12']);
+});
