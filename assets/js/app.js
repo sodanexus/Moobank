@@ -390,8 +390,23 @@ async function loadAllData(uid, signal) {
     const [accRes, posRes, prelRes, txRes, histRes, goalsRes] = results;
     // Aucune affectation globale ici : l'appelant doit encore vérifier que la
     // session n'a pas changé. Toutes les tables sont validées avant le commit.
+    const loadedAccounts = accRes.data.map(a => ({ id: a.id, name: a.name, type: a.type, solde: a.solde }));
+    const accountsByName = new Map();
+    loadedAccounts.forEach(account => {
+      const key = String(account.name || '').trim();
+      if (!key) return;
+      const matches = accountsByName.get(key) || [];
+      matches.push(account.id);
+      accountsByName.set(key, matches);
+    });
+    // Avant la migration, l'historique ne possédait que account_name. On ne
+    // rattache une ligne qu'en présence d'un nom de compte non ambigu.
+    const legacyAccountId = name => {
+      const matches = accountsByName.get(String(name || '').trim()) || [];
+      return matches.length === 1 ? matches[0] : null;
+    };
     const loaded = {
-      accounts: accRes.data.map(a => ({ id: a.id, name: a.name, type: a.type, solde: a.solde })),
+      accounts: loadedAccounts,
       positions: posRes.data.map(p => ({
         id: p.id, symbol: p.symbol, name: p.name, exchange: p.exchange,
         currency: p.currency, accountId: p.account_id, qty: p.qty,
@@ -403,7 +418,8 @@ async function loadAllData(uid, signal) {
       })),
       transactions: txRes.data.map(t => ({
         id: t.id, type: t.type, symbol: t.symbol, name: t.name,
-        qty: t.qty, price: t.price, accountName: t.account_name, ts: t.ts,
+        qty: t.qty, price: t.price, amount: t.amount, fees: t.fees,
+        accountId: t.account_id || legacyAccountId(t.account_name), accountName: t.account_name, ts: t.ts,
         ...(t.old_qty !== undefined && t.old_qty !== null ? { oldQty: t.old_qty } : {}),
         ...(t.old_price !== undefined && t.old_price !== null ? { oldPrice: t.old_price } : {}),
       })),
@@ -676,7 +692,8 @@ async function saveTransaction(tx) {
   const row = {
     id: tx.id, user_id: currentUser.id, type: tx.type,
     symbol: tx.symbol, name: tx.name, qty: tx.qty,
-    price: tx.price, account_name: tx.accountName, ts: tx.ts
+    price: tx.price, amount: tx.amount, fees: tx.fees ?? 0,
+    account_id: tx.accountId, account_name: tx.accountName, ts: tx.ts
   };
   if (tx.oldQty  !== undefined) row.old_qty   = tx.oldQty;
   if (tx.oldPrice !== undefined) row.old_price = tx.oldPrice;
@@ -1248,12 +1265,58 @@ function openModal(type) {
     document.getElementById('addPosBtn').disabled = true;
     document.getElementById('pos-qty').value = '';
     document.getElementById('pos-price').value = '';
+    document.getElementById('pos-fees').value = '';
     document.getElementById('existingPosInfo').classList.add('hidden');
     document.getElementById('pos-qty-hint').classList.add('hidden');
     hideSuggestions();
   }
-  const focusSelector = type === 'account' ? '#acc-name' : '#pos-ticker-input';
+  const focusSelector = type === 'account' ? '#acc-name' : type === 'cash' ? '#cash-amount' : '#pos-ticker-input';
   showDialog(document.getElementById(type + 'Modal'), focusSelector);
+}
+
+function openCashTransaction() {
+  const marketAccounts = accounts.filter(account => !FIXED_ACCOUNT_TYPES.has(account.type));
+  if (!marketAccounts.length) return showToast('Créez d’abord un compte de marché.', 'error');
+  const select = document.getElementById('cash-account');
+  select.innerHTML = '<option value="">— choisir —</option>';
+  marketAccounts.forEach(account => {
+    const option = document.createElement('option');
+    option.value = account.id;
+    option.textContent = `${account.name} · ${account.type}`;
+    select.appendChild(option);
+  });
+  document.getElementById('cash-type').value = 'deposit';
+  document.getElementById('cash-amount').value = '';
+  document.getElementById('cash-name').value = '';
+  openModal('cash');
+}
+
+async function saveCashTransaction() {
+  const accountId = document.getElementById('cash-account').value;
+  const type = document.getElementById('cash-type').value;
+  const amount = Number(document.getElementById('cash-amount').value);
+  const account = accounts.find(item => item.id === accountId);
+  if (!account) return showToast('Choisissez un compte.', 'error');
+  if (!Number.isFinite(amount) || amount <= 0) return showToast('Montant invalide.', 'error');
+  const labels = { deposit: 'Versement', withdrawal: 'Retrait', dividend: 'Dividende', interest: 'Intérêt', fee: 'Frais' };
+  const name = document.getElementById('cash-name').value.trim() || labels[type];
+  const tx = { id: crypto.randomUUID(), type, amount, name, accountId, accountName: account.name, ts: Date.now() };
+  const btn = document.getElementById('cashSaveBtn');
+  btn.disabled = true;
+  try {
+    await saveTransaction(tx);
+    transactions.unshift(tx);
+    if (transactions.length > 500) transactions.length = 500;
+    closeModal('cash');
+    renderAll();
+    renderTransactions();
+    showToast('✅ Flux de trésorerie enregistré', 'success');
+  } catch (error) {
+    console.error('[Moobank] saveCashTransaction error:', error);
+    showToast('Erreur : impossible de sauvegarder le flux.', 'error');
+  } finally {
+    btn.disabled = false;
+  }
 }
 function closeModal(type) { hideDialog(document.getElementById(type + 'Modal')); }
 
@@ -1303,6 +1366,8 @@ async function confirmPosition() {
   if (!acc) return alert('Veuillez choisir un compte');
   const accName = acc ? acc.name : '—';
   const btn = document.getElementById('addPosBtn');
+  const fees = parseFloat(document.getElementById('pos-fees').value) || 0;
+  if (fees < 0) return alert('Frais invalides');
   btn.disabled = true;
   let successMessage = '';
 
@@ -1316,7 +1381,7 @@ async function confirmPosition() {
       let target;
       if (existing) {
         const newPRU = existing.price > 0
-          ? (existing.qty * existing.price + qty * pru) / (existing.qty + qty)
+          ? (existing.qty * existing.price + qty * pru + fees) / (existing.qty + qty)
           : 0;
         target = {
           ...existing,
@@ -1333,7 +1398,7 @@ async function confirmPosition() {
         };
       }
 
-      const tx = { id: crypto.randomUUID(), type: 'buy', symbol: selectedTicker.symbol, name: selectedTicker.name, qty, price: pru, accountName: accName, ts: Date.now() };
+      const tx = { id: crypto.randomUUID(), type: 'buy', symbol: selectedTicker.symbol, name: selectedTicker.name, qty, price: pru, fees, accountId, accountName: accName, ts: Date.now() };
       await MoobankCore.runCompensatedOperation({
         commit: () => savePosition(target),
         audit: () => saveTransaction(tx),
@@ -1362,7 +1427,7 @@ async function confirmPosition() {
       if (!sellPrice || sellPrice <= 0) throw new Error('Prix de vente invalide');
       const previous = { ...existing };
       const fullSell = Math.abs(qty - existing.qty) < 0.000001;
-      const tx = { id: crypto.randomUUID(), type: 'sell', symbol: existing.symbol, name: existing.name, qty, price: sellPrice, accountName: accName, ts: Date.now() };
+      const tx = { id: crypto.randomUUID(), type: 'sell', symbol: existing.symbol, name: existing.name, qty, price: sellPrice, fees, accountId, accountName: accName, ts: Date.now() };
       const target = fullSell ? null : {
         ...existing,
         qty: parseFloat((existing.qty - qty).toFixed(8)),
@@ -1813,9 +1878,10 @@ let allocationMode = 'type';
 function accountValue(account) {
   if (!account) return 0;
   if (FIXED_ACCOUNT_TYPES.has(account.type)) return Math.max(0, Number(account.solde) || 0);
-  return positions
+  const positionsValue = positions
     .filter(position => position.accountId === account.id)
     .reduce((sum, position) => sum + (Number(position.current) || 0) * (Number(position.qty) || 0), 0);
+  return positionsValue + (MoobankCore.cashBalancesByAccount(transactions)[account.id] || 0);
 }
 
 function accountPerformance(account) {
@@ -1868,6 +1934,10 @@ function renderAllocation() {
       const account = accounts.find(item => item.id === position.accountId);
       add(account?.type || 'Autre', simTypeLabel(account?.type || 'Autre'), '', position.current * position.qty, account?.type || 'Autre');
     });
+    activeAccounts.filter(account => !FIXED_ACCOUNT_TYPES.has(account.type)).forEach(account => {
+      const cash = MoobankCore.cashBalancesByAccount(transactions)[account.id] || 0;
+      if (cash > 0) add(`cash:${account.id}`, 'Liquidités', account.name, cash, 'Autre');
+    });
     groups.forEach(group => {
       const count = activeAccounts.filter(account => account.type === group.type).length;
       group.detail = count + ' ' + (count > 1 ? 'comptes' : 'compte');
@@ -1883,6 +1953,10 @@ function renderAllocation() {
     activeAccounts
       .filter(account => FIXED_ACCOUNT_TYPES.has(account.type) && Number(account.solde) > 0)
       .forEach(account => add(account.id, account.name, simTypeLabel(account.type), account.solde, account.type));
+    activeAccounts.filter(account => !FIXED_ACCOUNT_TYPES.has(account.type)).forEach(account => {
+      const cash = MoobankCore.cashBalancesByAccount(transactions)[account.id] || 0;
+      if (cash > 0) add(`cash:${account.id}`, `${account.name} · Liquidités`, simTypeLabel(account.type), cash, 'Autre');
+    });
   }
 
   let sorted = [...groups.values()].filter(group => group.value > 0.005).sort((a, b) => b.value - a.value);
@@ -1943,7 +2017,9 @@ function renderSummary() {
   const activeAccountIds = new Set(activeAccounts.map(a => a.id));
   const fixedTotal = activeAccounts.filter(a => FIXED_ACCOUNT_TYPES.has(a.type)).reduce((s,a)=>s+(a.solde||0),0);
   const activePositions = positions.filter(p => activeAccountIds.has(p.accountId));
-  const total = activePositions.reduce((s,p)=>s+p.current*p.qty,0) + fixedTotal;
+  const activeTransactions = transactions.filter(tx => !tx.accountId || activeAccountIds.has(tx.accountId));
+  const breakdown = MoobankCore.wealthBreakdown(activeAccounts, activePositions, activeTransactions);
+  const total = breakdown.total;
   // PnL calculé uniquement sur les positions avec un PRU connu (price > 0)
   // Les positions à price=0 (PRU inconnu) sont exclues comme les livrets
   const positionsWithPRU = activePositions.filter(p => p.price > 0);
@@ -1978,9 +2054,9 @@ function renderSummary() {
   } else {
     totalEl.textContent = fmtEur(total);
   }
-  // Capital investi
+  // Les apports sont séparés des performances : les achats et ventes ne les changent pas.
   const ciEl = document.getElementById('capitalInvested');
-  if (ciEl) { ciEl.textContent = cost > 0 ? fmtEur(cost) : '—'; ciEl.className = 'wealth-metric-value'; }
+  if (ciEl) { ciEl.textContent = breakdown.netContributions ? fmtEur(breakdown.netContributions) : '—'; ciEl.className = 'wealth-metric-value'; }
 
   const tp=document.getElementById('totalPnl');
   const newPnlText = cost > 0 ? ((totalPnl>=0?'+':'')+fmtEur(totalPnl)+' ('+(totalPnl>=0?'+':'')+fmt(totalPnlPct)+'%)') : '—';
@@ -1990,6 +2066,12 @@ function renderSummary() {
   }
   tp.textContent = newPnlText;
   tp.className='wealth-metric-value '+(totalPnl>=0?'gain-col':'loss-col');
+
+  const cashEl = document.getElementById('cashAvailable');
+  if (cashEl) {
+    cashEl.textContent = fmtEur(breakdown.cash);
+    cashEl.className = 'wealth-metric-value ' + (breakdown.cash < 0 ? 'loss-col' : 'gain-col');
+  }
 
   // Dernière mise à jour des prix
   const luEl = document.getElementById('lastUpdateStat');
@@ -2269,14 +2351,14 @@ function renderFilterToggles() {
 function computeTotalPatrimoine() {
   // Patrimoine TOTAL, tous types confondus — utilisé pour les snapshots historiques
   // (indépendant des filtres actifs pour assurer la cohérence de l'historique)
-  const fixed = accounts.filter(a => FIXED_ACCOUNT_TYPES.has(a.type)).reduce((s,a) => s+(a.solde||0), 0);
-  return positions.reduce((s,p) => s + p.current * p.qty, 0) + fixed;
+  return MoobankCore.wealthBreakdown(accounts, positions, transactions).total;
 }
 function computeCurrentPatrimoine() {
   const activeAccounts = accounts.filter(a => isTypeActive(a.type));
-  const fixed = activeAccounts.filter(a => FIXED_ACCOUNT_TYPES.has(a.type)).reduce((s,a) => s+(a.solde||0), 0);
   const activeIds = new Set(activeAccounts.map(a => a.id));
-  return positions.filter(p => activeIds.has(p.accountId)).reduce((s,p) => s + p.current * p.qty, 0) + fixed;
+  return MoobankCore.wealthBreakdown(activeAccounts,
+    positions.filter(p => activeIds.has(p.accountId)),
+    transactions.filter(tx => !tx.accountId || activeIds.has(tx.accountId))).total;
 }
 
 function parisDateKey(date = new Date()) {
@@ -2622,24 +2704,27 @@ function renderTransactions() {
   el.innerHTML = transactions.map((tx, i) => {
     const isEdit = tx.type === 'edit';
     const isBuy = tx.type === 'buy';
-    const icon = isEdit ? '✏️' : (isBuy ? '↑' : '↓');
-    const iconClass = isEdit ? 'edit' : (isBuy ? 'buy' : 'sell');
-    const iconColor = isEdit ? 'var(--accent2)' : (isBuy ? 'var(--gain)' : 'var(--loss)');
-    const val = tx.qty * tx.price;
+    const isTrade = isEdit || isBuy || tx.type === 'sell';
+    const isPositiveCash = ['deposit', 'dividend', 'interest'].includes(tx.type);
+    const icon = isEdit ? '✏️' : isBuy ? '↑' : tx.type === 'sell' ? '↓' : isPositiveCash ? '＋' : '−';
+    const iconClass = isEdit ? 'edit' : (isBuy || isPositiveCash ? 'buy' : 'sell');
+    const iconColor = isEdit ? 'var(--accent2)' : (isBuy || isPositiveCash ? 'var(--gain)' : 'var(--loss)');
+    const val = isTrade ? tx.qty * tx.price : tx.amount;
     const d = new Date(tx.ts);
     const dateStr = d.toLocaleDateString('fr-FR', { day:'numeric', month:'short', year:'numeric' });
     const timeStr = d.toLocaleTimeString('fr-FR', { hour:'2-digit', minute:'2-digit' });
     const delay = Math.min(i * 45, 400);
     const detail = isEdit
       ? `${tx.qty} titres · PRU ${fmtPrice(tx.price)}${tx.oldQty !== tx.qty ? ` (était ${tx.oldQty})` : ''}${tx.oldPrice !== tx.price ? ` / ${fmtPrice(tx.oldPrice)}` : ''} · ${_esc(tx.accountName)}`
-      : `${tx.qty} × ${fmtPrice(tx.price)} · ${_esc(tx.accountName)}`;
+      : isTrade ? `${tx.qty} × ${fmtPrice(tx.price)}${tx.fees ? ` · frais ${fmtEur(tx.fees)}` : ''} · ${_esc(tx.accountName)}`
+      : `${_esc(tx.name || 'Flux de trésorerie')} · ${_esc(tx.accountName)}`;
     const valHtml = isEdit
       ? `<div class="tx-val" style="color:var(--accent2)">${fmtEur(val)}</div>`
-      : `<div class="tx-val" style="color:${iconColor}">${isBuy ? '+' : '-'}${fmtEur(val)}</div>`;
+      : `<div class="tx-val" style="color:${iconColor}">${isBuy || isPositiveCash ? '+' : '-'}${fmtEur(val)}</div>`;
     return `<div class="tx-item" style="animation-delay:${delay}ms">
       <div class="tx-icon ${iconClass}" style="color:${iconColor};${isEdit ? 'background:rgba(0,112,243,0.1);font-size:0.8rem' : ''}">${icon}</div>
       <div class="tx-info">
-        <div class="tx-sym">${_esc(tx.symbol)}${isEdit ? ' <span style="font-size:0.62rem;color:var(--accent2);background:rgba(0,112,243,0.12);padding:1px 5px;border-radius:3px;font-weight:500">MODIF</span>' : ''}</div>
+        <div class="tx-sym">${_esc(isTrade ? tx.symbol : tx.name || 'Flux')}${isEdit ? ' <span style="font-size:0.62rem;color:var(--accent2);background:rgba(0,112,243,0.12);padding:1px 5px;border-radius:3px;font-weight:500">MODIF</span>' : ''}</div>
         <div class="tx-detail">${detail}</div>
       </div>
       <div class="tx-right">
@@ -3852,7 +3937,7 @@ async function confirmEditPosition() {
     price: parseFloat(price.toFixed(10)),
   };
   const accName = getAccountName(p.accountId);
-  const tx = { id: crypto.randomUUID(), type: 'edit', symbol: p.symbol, name: p.name, qty: target.qty, price: target.price, oldQty, oldPrice, accountName: accName, ts: Date.now() };
+  const tx = { id: crypto.randomUUID(), type: 'edit', symbol: p.symbol, name: p.name, qty: target.qty, price: target.price, oldQty, oldPrice, accountId: p.accountId, accountName: accName, ts: Date.now() };
   try {
     await MoobankCore.runCompensatedOperation({
       commit: () => savePosition(target),
@@ -3956,6 +4041,6 @@ window.App.authRecoveryVersion = '2026-08-28.1';
 for (const k of ['openMobileActions', 'closeMobileActions', 'runMobileAction']) {
   window.App[k] = window[k];
 }
-for (const k of ['addAccount', 'cancelAddPrel', 'cancelLivretEdit', 'closeEditPosition', 'closeGoalModal', 'closeModal', 'confirmAddPrel', 'confirmEditPosition', 'confirmEditPrel', 'confirmLivretSolde', 'confirmPosition', 'deleteAccount', 'deleteGoal', 'deletePosition', 'deletePrel', 'editGoal', 'editLivretSolde', 'editPrel', 'exportDataBackup', 'openAddGoal', 'openAddPrel', 'openEditPosition', 'openModal', 'refreshAllPrices', 'renderPrelevements', 'retryCachedDataSync', 'saveGoal', 'selectGoalEmoji', 'selectTickerByIndex', 'setAllocationMode', 'setChartPeriod', 'setPosSide', 'setTrajectoryYears', 'signOut', 'simNormalizeContribution', 'simNormalizeRate', 'simResetContributions', 'simResetRates', 'simSetContribution', 'simSetRate', 'sortPositions', 'switchPosTab', 'switchTab', 'toggleAll', 'toggleMobilePositionCard', 'toggleType']) {
+for (const k of ['addAccount', 'cancelAddPrel', 'cancelLivretEdit', 'closeEditPosition', 'closeGoalModal', 'closeModal', 'confirmAddPrel', 'confirmEditPosition', 'confirmEditPrel', 'confirmLivretSolde', 'confirmPosition', 'deleteAccount', 'deleteGoal', 'deletePosition', 'deletePrel', 'editGoal', 'editLivretSolde', 'editPrel', 'exportDataBackup', 'openAddGoal', 'openAddPrel', 'openCashTransaction', 'openEditPosition', 'openModal', 'refreshAllPrices', 'renderPrelevements', 'retryCachedDataSync', 'saveCashTransaction', 'saveGoal', 'selectGoalEmoji', 'selectTickerByIndex', 'setAllocationMode', 'setChartPeriod', 'setPosSide', 'setTrajectoryYears', 'signOut', 'simNormalizeContribution', 'simNormalizeRate', 'simResetContributions', 'simResetRates', 'simSetContribution', 'simSetRate', 'sortPositions', 'switchPosTab', 'switchTab', 'toggleAll', 'toggleMobilePositionCard', 'toggleType']) {
   if (typeof window[k] === 'function') window.App[k] = window[k];
 }

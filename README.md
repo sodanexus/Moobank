@@ -65,9 +65,14 @@ Le portefeuille conserve toute la gestion opérationnelle :
 - achat, vente et modification d’une position ;
 - quantité, PRU, cours actuel, valeur et plus-value ;
 - historique des mouvements ;
+- trésorerie calculée par compte de marché : versements, retraits, dividendes, intérêts et frais ;
 - prélèvements récurrents et équivalents mensuel/annuel.
 
 L’actualisation conserve la dernière cotation connue lorsqu’une nouvelle valeur manque. Une position supprimée depuis un autre appareil n’est jamais recréée pendant une synchronisation.
+
+Les achats et ventes peuvent inclure des frais. Ils ajustent les liquidités du compte concerné ; les frais d'achat sont aussi intégrés au PRU. La synthèse sépare les apports nets, la performance latente et les liquidités afin de ne pas confondre les versements avec le rendement.
+
+Pour l’historique antérieur à cette fonctionnalité, Moobank rattache aussi les mouvements à leur compte lorsque leur nom est unique. Les anciennes lignes « modification » qui contiennent l’ancienne et la nouvelle quantité/PRU reconstituent alors le flux correspondant à la différence de capital. Une correction volontaire de quantité ou de PRU est donc également interprétée comme un ajustement de trésorerie.
 
 ### Trajectoire
 
@@ -163,6 +168,8 @@ Ne relancez jamais `supabase_shema.sql` sur une base déjà en service. Les donn
 
 Pour créer des comptes portant les trois nouveaux libellés, exécutez une seule fois le script ciblé `scripts/optional/enable-savings-account-types.sql` dans l’éditeur SQL Supabase. Il remplace uniquement la contrainte de validation du type de compte : aucune table ni ligne n’est supprimée. Sans ce script, le reste de la version fonctionne normalement, mais Supabase refusera la création d’un `Livret A`, d’un `LDDS` ou d’un `Autre livret`.
 
+Pour activer les flux de trésorerie sur une base existante, exécutez une seule fois `scripts/optional/enable-cash-transactions.sql`. Cette migration ajoute le compte, le montant et les frais aux mouvements, sans modifier les transactions existantes. Elle est nécessaire avant d’enregistrer des versements, retraits, dividendes, intérêts ou frais depuis l’application.
+
 ### Passage du dépôt à Moobank
 
 Le nom du dépôt GitHub se modifie manuellement après l’envoi des fichiers :
@@ -220,7 +227,7 @@ Le script optionnel `scripts/optional/remove-private-projection-plan.sql` suppri
 
 ## Limites
 
-- Moobank valorise les actifs mais ne tient pas automatiquement un solde espèces après chaque achat ou vente.
+- Les liquidités sont calculées à partir des mouvements saisis : renseignez le versement initial, les retraits, dividendes, intérêts et frais pour obtenir un solde fiable.
 - Les cotations peuvent être différées selon les marchés et le fournisseur.
 - La trajectoire est une estimation sensible aux hypothèses choisies.
 - L’application n’agrège pas automatiquement les comptes bancaires : les données restent saisies et contrôlées par l’utilisateur.

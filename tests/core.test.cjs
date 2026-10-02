@@ -143,3 +143,37 @@ test('une position supprimée pendant le refresh est retirée sans écraser les 
     id: 'a', qty: 4, price: 12, current: 14, change: 1, changePercent: 7.7, lastUpdated: 1234,
   });
 });
+
+test('les flux, frais et opérations de marché produisent une trésorerie exacte', () => {
+  const transactions = [
+    { type: 'deposit', accountId: 'pea', amount: 1000 },
+    { type: 'buy', accountId: 'pea', qty: 4, price: 100, fees: 2 },
+    { type: 'dividend', accountId: 'pea', amount: 12 },
+    { type: 'sell', accountId: 'pea', qty: 1, price: 110, fees: 1 },
+    { type: 'fee', accountId: 'pea', amount: 3 },
+    { type: 'withdrawal', accountId: 'pea', amount: 50 },
+  ];
+  assert.equal(core.transactionCashImpact(transactions[1]), -402);
+  assert.equal(core.transactionCashImpact(transactions[3]), 109);
+  assert.deepEqual({ ...core.cashBalancesByAccount(transactions) }, { pea: 666 });
+});
+
+test('la synthèse sépare valeur de marché, liquidités et apports nets', () => {
+  const result = core.wealthBreakdown(
+    [{ id: 'pea', type: 'PEA' }, { id: 'livret', type: 'Livret A', solde: 2000 }],
+    [{ accountId: 'pea', qty: 5, current: 120 }],
+    [{ type: 'deposit', accountId: 'pea', amount: 500 }, { type: 'fee', accountId: 'pea', amount: 10 }]
+  );
+  assert.deepEqual({ ...result, cashByAccount: { ...result.cashByAccount } }, {
+    marketValue: 600, fixedValue: 2000, cash: 490, total: 3090, netContributions: 500, cashByAccount: { pea: 490 },
+  });
+});
+
+test('une ancienne modification quantité/PRU reconstitue son flux de trésorerie', () => {
+  const legacyEdit = {
+    type: 'edit', accountId: 'pea', qty: 15, price: 120,
+    oldQty: 10, oldPrice: 100,
+  };
+  assert.equal(core.transactionCashImpact(legacyEdit), -800);
+  assert.deepEqual({ ...core.cashBalancesByAccount([legacyEdit]) }, { pea: -800 });
+});
