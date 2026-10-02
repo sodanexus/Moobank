@@ -1,16 +1,3 @@
-# Moobank 2.6.0 — performance hors versements
-
-- colonne `invested` (capital investi) ajoutée à `patrimoine_history`, nullable : les anciens points restent valides ;
-- script SQL non destructif `scripts/optional/add-invested-to-history.sql`, **à exécuter dans Supabase avant de déployer cette version** ;
-- snapshots (appli et GitHub Actions) enregistrent valeur et capital investi (quantité × PRU ; soldes fixes comptés à leur valeur ; sans PRU, valeur actuelle) ;
-- « Variation globale » devient « Performance » : gain = Δ(valeur − investi), pourcentage rapporté au capital de départ plus la moitié des flux nets (Dietz modifié) ;
-- si le point de départ n'a pas de capital investi (historique antérieur), l'affichage reste la variation brute, libellée « Variation brute » ;
-- bouton **Reconstituer l'investi** (graphique) : rejoue les mouvements à rebours depuis la situation actuelle (édition = ancien état exact, achat = −qté×prix, vente partielle = +qté×PRU) pour compléter les anciens points ; ne modifie jamais un point déjà renseigné, s'arrête devant un mouvement impossible à annuler sans deviner, suppose les soldes de livrets constants ;
-- limite connue : une vente en plus-value (ou moins-value) sort du calcul la plus-value réalisée, car seuls les coûts sont suivis ; un suivi exact demandera des flux datés ;
-- tests ajoutés pour la performance et la validation de la colonne.
-
----
-
 # Moobank 2.5.0 — portefeuille mobile et filet de sécurité
 
 - taux USD/EUR réintroduit discrètement sur mobile, sans rétablir l’ancien en-tête encombrant ;

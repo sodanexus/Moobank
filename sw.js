@@ -1,4 +1,4 @@
-const APP_VERSION = '2.6.0';
+const APP_VERSION = '2.5.0';
 const CACHE_PREFIX = 'moobank-shell-';
 const CACHE_NAME = `${CACHE_PREFIX}${APP_VERSION}`;
 const versioned = path => `${path}?v=${APP_VERSION}`;
