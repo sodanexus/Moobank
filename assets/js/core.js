@@ -7,7 +7,6 @@
     'Livret', 'Livret A', 'LDDS', 'Autre livret', 'Immo', 'Autre'
   ]);
   const ACCOUNT_TYPE_SET = new Set(ACCOUNT_TYPES);
-  const TRANSACTION_TYPES = new Set(['buy', 'sell', 'edit', 'deposit', 'withdrawal', 'dividend', 'interest', 'fee']);
 
   function requiredString(value, field, maxLength = 240) {
     const normalized = String(value ?? '').trim();
@@ -87,63 +86,14 @@
   function validateTransactionRecord(row) {
     requiredString(row?.id, 'transactions.id', 100);
     requiredString(row?.user_id, 'transactions.user_id', 100);
-    if (!TRANSACTION_TYPES.has(row?.type)) throw new TypeError('Type de mouvement invalide');
-    const isTrade = ['buy', 'sell', 'edit'].includes(row.type);
-    if (isTrade) {
-      requiredString(row?.symbol, 'transactions.symbol', 80);
-      finiteNumber(row?.qty, 'transactions.qty', { min: Number.EPSILON, max: 1e15 });
-      finiteNumber(row?.price, 'transactions.price', { min: 0, max: 1e15 });
-    } else {
-      requiredString(row?.account_id, 'transactions.account_id', 100);
-      finiteNumber(row?.amount, 'transactions.amount', { min: Number.EPSILON, max: 1e15 });
-    }
-    finiteNumber(row?.fees, 'transactions.fees', { min: 0, max: 1e15, nullable: true });
+    if (!['buy', 'sell', 'edit'].includes(row?.type)) throw new TypeError('Type de mouvement invalide');
+    requiredString(row?.symbol, 'transactions.symbol', 80);
+    finiteNumber(row?.qty, 'transactions.qty', { min: Number.EPSILON, max: 1e15 });
+    finiteNumber(row?.price, 'transactions.price', { min: 0, max: 1e15 });
     finiteNumber(row?.ts, 'transactions.ts', { min: 0, max: 1e16 });
     finiteNumber(row?.old_qty, 'transactions.old_qty', { min: 0, max: 1e15, nullable: true });
     finiteNumber(row?.old_price, 'transactions.old_price', { min: 0, max: 1e15, nullable: true });
     return row;
-  }
-
-  function transactionCashImpact(tx) {
-    const type = String(tx?.type || '');
-    const fees = Number(tx?.fees) || 0;
-    const tradeAmount = Number(tx?.qty) * Number(tx?.price);
-    if (type === 'buy') return -(tradeAmount + fees);
-    if (type === 'sell') return tradeAmount - fees;
-    if (type === 'edit') {
-      const oldQty = Number(tx?.oldQty ?? tx?.old_qty);
-      const oldPrice = Number(tx?.oldPrice ?? tx?.old_price);
-      // Les anciennes opérations étaient enregistrées comme une édition de la
-      // quantité et du PRU : la différence de capital reconstitue le flux.
-      if (Number.isFinite(oldQty) && Number.isFinite(oldPrice)) return oldQty * oldPrice - tradeAmount;
-    }
-    if (['deposit', 'dividend', 'interest'].includes(type)) return Number(tx?.amount) || 0;
-    if (['withdrawal', 'fee'].includes(type)) return -(Number(tx?.amount) || 0);
-    return 0;
-  }
-
-  function cashBalancesByAccount(transactions) {
-    return (transactions || []).reduce((balances, tx) => {
-      if (!tx?.accountId && !tx?.account_id) return balances;
-      const accountId = tx.accountId || tx.account_id;
-      balances[accountId] = (balances[accountId] || 0) + transactionCashImpact(tx);
-      return balances;
-    }, {});
-  }
-
-  function wealthBreakdown(accounts, positions, transactions) {
-    const cashByAccount = cashBalancesByAccount(transactions);
-    const marketValue = (positions || []).reduce((sum, position) => sum +
-      (Number(position.current) || 0) * (Number(position.qty) || 0), 0);
-    const fixedValue = (accounts || []).filter(account => ['Livret', 'Livret A', 'LDDS', 'Autre livret', 'Immo', 'Autre'].includes(account.type))
-      .reduce((sum, account) => sum + (Number(account.solde) || 0), 0);
-    const cash = Object.values(cashByAccount).reduce((sum, value) => sum + value, 0);
-    const netContributions = (transactions || []).reduce((sum, tx) => {
-      if (tx.type === 'deposit') return sum + (Number(tx.amount) || 0);
-      if (tx.type === 'withdrawal') return sum - (Number(tx.amount) || 0);
-      return sum;
-    }, 0);
-    return { marketValue, fixedValue, cash, total: marketValue + fixedValue + cash, netContributions, cashByAccount };
   }
 
   function validateHistoryRecord(row) {
@@ -192,16 +142,10 @@
     }
     for (const transaction of data.transactions) {
       requiredString(transaction?.id, 'cache.transactions.id', 100);
-      if (!TRANSACTION_TYPES.has(transaction?.type)) throw new TypeError('Cache mouvement invalide');
-      if (['buy', 'sell', 'edit'].includes(transaction.type)) {
-        requiredString(transaction?.symbol, 'cache.transactions.symbol', 80);
-        finiteNumber(transaction?.qty, 'cache.transactions.qty', { min: Number.EPSILON, max: 1e15 });
-        finiteNumber(transaction?.price, 'cache.transactions.price', { min: 0, max: 1e15 });
-      } else {
-        requiredString(transaction?.accountId, 'cache.transactions.accountId', 100);
-        finiteNumber(transaction?.amount, 'cache.transactions.amount', { min: Number.EPSILON, max: 1e15 });
-      }
-      finiteNumber(transaction?.fees, 'cache.transactions.fees', { min: 0, max: 1e15, nullable: true });
+      if (!['buy', 'sell', 'edit'].includes(transaction?.type)) throw new TypeError('Cache mouvement invalide');
+      requiredString(transaction?.symbol, 'cache.transactions.symbol', 80);
+      finiteNumber(transaction?.qty, 'cache.transactions.qty', { min: Number.EPSILON, max: 1e15 });
+      finiteNumber(transaction?.price, 'cache.transactions.price', { min: 0, max: 1e15 });
       finiteNumber(transaction?.ts, 'cache.transactions.ts', { min: 0, max: 1e16 });
     }
     for (const point of data.patrimoineHistory) {
@@ -342,9 +286,6 @@
     validatePositionPriceUpdate,
     validatePrelevementRecord,
     validateTransactionRecord,
-    transactionCashImpact,
-    cashBalancesByAccount,
-    wealthBreakdown,
     validateHistoryRecord,
     validateGoalRecord,
     validateCachedDataset,

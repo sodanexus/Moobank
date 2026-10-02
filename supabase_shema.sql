@@ -71,14 +71,11 @@ CREATE INDEX IF NOT EXISTS idx_prelevements_user_id
 CREATE TABLE IF NOT EXISTS public.transactions (
   id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id       UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-  type          TEXT NOT NULL CHECK (type IN ('buy', 'sell', 'edit', 'deposit', 'withdrawal', 'dividend', 'interest', 'fee')),
-  account_id    UUID REFERENCES public.accounts(id) ON DELETE SET NULL,
-  symbol        TEXT NOT NULL DEFAULT '',
+  type          TEXT NOT NULL CHECK (type IN ('buy', 'sell', 'edit')),
+  symbol        TEXT NOT NULL,
   name          TEXT NOT NULL DEFAULT '',
-  qty           NUMERIC(24, 8) NOT NULL DEFAULT 0 CHECK (qty >= 0),
-  price         NUMERIC(24, 10) NOT NULL DEFAULT 0 CHECK (price >= 0),
-  amount        NUMERIC(24, 2),
-  fees          NUMERIC(24, 2) NOT NULL DEFAULT 0 CHECK (fees >= 0),
+  qty           NUMERIC(24, 8) NOT NULL CHECK (qty > 0),
+  price         NUMERIC(24, 10) NOT NULL CHECK (price >= 0),
   account_name  TEXT NOT NULL DEFAULT '',
   ts            BIGINT NOT NULL,
   old_qty       NUMERIC(24, 8),
@@ -88,8 +85,6 @@ CREATE TABLE IF NOT EXISTS public.transactions (
 
 CREATE INDEX IF NOT EXISTS idx_transactions_user_ts
   ON public.transactions(user_id, ts DESC);
-CREATE INDEX IF NOT EXISTS idx_transactions_account_id
-  ON public.transactions(account_id);
 
 -- ── Historique journalier du patrimoine ──────────────────────────────────────
 CREATE TABLE IF NOT EXISTS public.patrimoine_history (
