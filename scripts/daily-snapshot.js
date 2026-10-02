@@ -230,7 +230,7 @@ async function snapshotUser(userId) {
 
   const { data: positions = [] } = await runSupabase('positions', () => sb
     .from('positions')
-    .select('symbol, qty, price, account_id')
+    .select('symbol, qty, account_id')
     .eq('user_id', userId));
 
   positions.forEach(position => {
@@ -261,34 +261,21 @@ async function snapshotUser(userId) {
     marketTotal += quotes.get(symbol).priceEur * qty;
   }
 
-  // Capital investi : quantité × PRU. Sans PRU renseigné, la valeur actuelle est
-  // retenue (aucun gain fictif). Les soldes fixes comptent à leur valeur.
-  let marketInvested = 0;
-  for (const position of positions.filter(item => !fixedIds.has(item.account_id))) {
-    const pru = Number(position.price);
-    const unit = Number.isFinite(pru) && pru > 0 ? pru : quotes.get(position.symbol).priceEur;
-    marketInvested += unit * (Number(position.qty) || 0);
-  }
-
   const totalValue = Math.round((marketTotal + fixedTotal) * 100) / 100;
-  const totalInvested = Math.round((marketInvested + fixedTotal) * 100) / 100;
   assertFiniteAmount(totalValue, 'patrimoine total');
-  assertFiniteAmount(totalInvested, 'capital investi');
   const { data: saved } = await runSupabase('patrimoine_history', () => sb
     .from('patrimoine_history')
     .upsert(
-      { user_id: userId, date: today, value: totalValue, invested: totalInvested },
+      { user_id: userId, date: today, value: totalValue },
       { onConflict: 'user_id,date' }
     )
-    .select('user_id,date,value,invested')
+    .select('user_id,date,value')
     .single());
-  if (saved?.user_id !== userId || saved?.date !== today || Math.abs(Number(saved?.value) - totalValue) > 0.005 ||
-      Math.abs(Number(saved?.invested) - totalInvested) > 0.005) {
+  if (saved?.user_id !== userId || saved?.date !== today || Math.abs(Number(saved?.value) - totalValue) > 0.005) {
     throw new Error('patrimoine_history: écriture non confirmée');
   }
 
   console.log(`✓ ${userId.slice(0, 8)}… → ${totalValue.toLocaleString('fr-FR')} € (${today})`);
-  console.log(`  investi : ${Math.round(totalInvested).toLocaleString('fr-FR')} €`);
   console.log(`  marché : ${Math.round(marketTotal).toLocaleString('fr-FR')} € | fixe : ${Math.round(fixedTotal).toLocaleString('fr-FR')} €`);
 }
 
