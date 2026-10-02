@@ -92,6 +92,7 @@ CREATE TABLE IF NOT EXISTS public.patrimoine_history (
   user_id     UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
   date        DATE NOT NULL,
   value       NUMERIC(24, 2) NOT NULL CHECK (value >= 0),
+  invested    NUMERIC(24, 2) CHECK (invested IS NULL OR invested >= 0),
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE(user_id, date)
 );

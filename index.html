@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <title>Moobank — Patrimoine</title>
 <meta name="description" content="Moobank, le tableau de bord privé pour comprendre, organiser et suivre son patrimoine.">
-<meta name="moobank-version" content="2.5.0">
+<meta name="moobank-version" content="2.6.0">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -14,11 +14,11 @@
 <meta name="robots" content="noindex, nofollow, noarchive, nosnippet">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="icon" type="image/svg+xml" href="./assets/brand/moobank-mark.svg">
-<link rel="manifest" href="manifest.json?v=2.5.0">
+<link rel="manifest" href="manifest.json?v=2.6.0">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Plus+Jakarta+Sans:wght@400;600;700;800&family=DM+Mono:wght@300;400;500&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.115.0" crossorigin="anonymous"></script>
-<link rel="stylesheet" href="./assets/css/app.css?v=2.5.0">
-<link rel="stylesheet" href="./assets/css/v2.css?v=2.5.0">
+<link rel="stylesheet" href="./assets/css/app.css?v=2.6.0">
+<link rel="stylesheet" href="./assets/css/v2.css?v=2.6.0">
 </head>
 <body>
   <!-- OFFLINE BANNER -->
@@ -184,6 +184,7 @@
           <button class="period-btn" onclick="setChartPeriod('1A',this)">1A</button>
           <button class="period-btn" onclick="setChartPeriod('Tout',this)">Tout</button>
           <button class="btn btn-sm" onclick="openHistoryImport()" title="Importer un historique passé">Importer</button>
+          <button class="btn btn-sm" onclick="reconstructInvestedFromTransactions()" title="Calculer le capital investi des anciens points à partir de tes mouvements">Reconstituer l'investi</button>
         </div>
       </div>
     </div>
@@ -554,9 +555,9 @@
 
   </div><!-- end tab-simulator -->
 
-<script src="./assets/js/core.js?v=2.5.0"></script>
-<script src="./assets/js/trajectory-core.js?v=2.5.0"></script>
-<script src="./assets/js/app.js?v=2.5.0"></script>
+<script src="./assets/js/core.js?v=2.6.0"></script>
+<script src="./assets/js/trajectory-core.js?v=2.6.0"></script>
+<script src="./assets/js/app.js?v=2.6.0"></script>
 
 </div><!-- end .app -->
 
@@ -765,6 +766,6 @@
   </div>
 </div>
 
-<script src="./assets/js/history-import.js?v=2.5.0"></script>
+<script src="./assets/js/history-import.js?v=2.6.0"></script>
 </body>
 </html>
