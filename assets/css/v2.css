@@ -275,7 +275,7 @@ body::before {
 }
 .filter-toggle.active { border: 0; background: rgba(85, 230, 177, .12); color: var(--accent); }
 .filter-toggle .ft-dot { width: 5px; height: 5px; }
-.wealth-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.wealth-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
 .wealth-metric {
   min-height: 92px;
   padding: 15px;
@@ -802,7 +802,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); box-sha
   .total-value { font-size: clamp(2.25rem, 11vw, 3.25rem); }
   .wealth-metrics { grid-template-columns: 1fr 1fr; }
   .wealth-metric { min-height: 82px; }
-  .wealth-metric:last-child { grid-column: auto; }
+  .wealth-metric:last-child { grid-column: 1 / -1; }
   .card { border-radius: 16px; }
   .card-header { padding: 15px 16px; }
   .card-body { padding: 16px; }
