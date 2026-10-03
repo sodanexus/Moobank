@@ -274,6 +274,57 @@
     }
   }
 
+  // ── DCA : renfort d'une ligne et lecture de l'historique ─────────────────────
+  const STALE_SYNC_DAYS = 35;
+
+  // Calcule la nouvelle quantité et le nouveau PRU après un achat de `bought`
+  // titres à `buyPrice`, frais éventuels inclus. Retourne null si impossible
+  // (PRU actuel inconnu ou saisie invalide).
+  function computeReinforcement({ qty, pru, bought, buyPrice, fees = 0 }) {
+    const q = Number(qty), c = Number(pru), b = Number(bought), px = Number(buyPrice), f = Number(fees) || 0;
+    if (![q, c, b, px].every(Number.isFinite) || q <= 0 || c <= 0 || b <= 0 || px < 0 || f < 0) return null;
+    const newQty = q + b;
+    const invested = b * px + f;
+    const newPru = (q * c + invested) / newQty;
+    return {
+      qty: Number(newQty.toFixed(8)),
+      price: Number(newPru.toFixed(10)),
+      invested: Number(invested.toFixed(2)),
+    };
+  }
+
+  // Montant réellement investi par un mouvement.
+  // { kind: 'invest'|'sell'|'correction'|'unknown', amount }
+  function transactionInvestment(tx) {
+    if (!tx) return { kind: 'unknown', amount: null };
+    if (tx.type === 'buy') return { kind: 'invest', amount: tx.qty * tx.price };
+    if (tx.type === 'sell') return { kind: 'sell', amount: tx.qty * tx.price };
+    if (tx.type !== 'edit') return { kind: 'unknown', amount: null };
+    const oldQty = tx.oldQty, oldPrice = tx.oldPrice;
+    if (!Number.isFinite(oldQty) || !Number.isFinite(oldPrice) || oldQty <= 0 || oldPrice <= 0 || !(tx.price > 0)) {
+      return { kind: 'unknown', amount: null };
+    }
+    const amount = tx.qty * tx.price - oldQty * oldPrice;
+    if (tx.qty > oldQty && amount > 0) return { kind: 'invest', amount: Number(amount.toFixed(2)) };
+    return { kind: 'correction', amount: Number(amount.toFixed(2)) };
+  }
+
+  // Dernier mouvement (achat/modif) par couple symbole + compte.
+  function lastSyncMap(transactions) {
+    const map = new Map();
+    for (const tx of transactions || []) {
+      if (tx.type === 'sell' || !Number.isFinite(tx.ts)) continue;
+      const key = `${tx.symbol}|${tx.accountName}`;
+      if (!map.has(key) || tx.ts > map.get(key)) map.set(key, tx.ts);
+    }
+    return map;
+  }
+
+  function syncAgeDays(ts, now = Date.now()) {
+    if (!Number.isFinite(ts)) return null;
+    return Math.max(0, Math.floor((now - ts) / 86400000));
+  }
+
   const api = Object.freeze({
     ACCOUNT_TYPES,
     mapWithConcurrency,
@@ -292,6 +343,11 @@
     createDataCacheEnvelope,
     parseDataCacheEnvelope,
     mergePositionPriceUpdates,
+    STALE_SYNC_DAYS,
+    computeReinforcement,
+    transactionInvestment,
+    lastSyncMap,
+    syncAgeDays,
   });
   root.MoobankCore = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

@@ -1704,6 +1704,14 @@ function renderPositions() {
     return;
   }
 
+  const syncMap = MoobankCore.lastSyncMap(transactions);
+  const syncBadge = (p) => {
+    const days = MoobankCore.syncAgeDays(syncMap.get(`${p.symbol}|${getAccountName(p.accountId)}`));
+    if (days === null) return '';
+    const stale = days >= MoobankCore.STALE_SYNC_DAYS;
+    const label = days === 0 ? "mis à jour aujourd'hui" : `mis à jour il y a ${days} j`;
+    return `<div class="sync-age${stale ? ' stale' : ''}" title="Dernier achat / dernière modification saisie dans Moobank">${stale ? '<span class="sync-dot"></span>' : ''}${label}</div>`;
+  };
   const rendered = filtered.map((p, i) => {
     const value=p.current*p.qty;
     const pnl = p.price > 0 ? (p.current-p.price)*p.qty : null;
@@ -1726,7 +1734,7 @@ function renderPositions() {
       ? '<span style="color:var(--muted)">PRU inconnu</span>'
       : `<span style="color:${color}">${pnl>=0?'+':''}${fmtEur(pnl)} · ${pct>=0?'+':''}${fmt(pct)}%</span>`;
     const row = `<tr style="animation:rowIn 0.3s ease ${i * 0.04}s both" data-pid="${p.id}">
-      <td><div class="ticker-sym">${_esc(p.symbol)}</div><div class="ticker-name">${_esc(p.name||'')}</div></td>
+      <td><div class="ticker-sym">${_esc(p.symbol)}</div><div class="ticker-name">${_esc(p.name||'')}</div>${syncBadge(p)}</td>
       <td style="font-size:0.75rem">${_esc(getAccountName(p.accountId))}</td>
       <td><span class="tag ${tagClass(type)}">${_esc(typeLabel)}</span></td>
       <td>${qtyDisplay}</td>
@@ -1741,7 +1749,7 @@ function renderPositions() {
     const card = `<article class="position-mobile-card" id="mobile-position-${p.id}">
       <button type="button" class="position-mobile-summary" aria-expanded="false" aria-controls="mobile-position-details-${p.id}" onclick="toggleMobilePositionCard('${p.id}')">
         <span class="position-mobile-identity">
-          <span class="position-mobile-symbol">${_esc(p.symbol)}</span>
+          <span class="position-mobile-symbol">${_esc(p.symbol)}${(() => { const d = MoobankCore.syncAgeDays(syncMap.get(`${p.symbol}|${getAccountName(p.accountId)}`)); return d !== null && d >= MoobankCore.STALE_SYNC_DAYS ? ' <span class="sync-dot" title="Pas mis à jour depuis ' + d + ' j"></span>' : ''; })()}</span>
           <span class="position-mobile-name">${_esc(p.name || p.symbol)}</span>
           <span class="position-mobile-meta"><span>${_esc(getAccountName(p.accountId))}</span><span class="tag ${tagClass(type)}">${_esc(typeLabel)}</span></span>
         </span>
@@ -1755,6 +1763,7 @@ function renderPositions() {
         <div><div class="position-mobile-detail-label">Quantité</div><div class="position-mobile-detail-value">${qtyDisplay}</div></div>
         <div><div class="position-mobile-detail-label">PRU</div><div class="position-mobile-detail-value">${priceDisplay}</div></div>
         <div><div class="position-mobile-detail-label">Cours</div><div class="position-mobile-detail-value">${fmtPrice(p.current)}</div></div>
+        ${syncBadge(p) ? `<div class="position-mobile-sync">${syncBadge(p)}</div>` : ''}
         <div class="position-mobile-actions">
           <button type="button" class="btn" onclick="openEditPosition('${p.id}')">Modifier</button>
           <button type="button" class="btn btn-sell" onclick="deletePosition('${p.id}')">Supprimer</button>
@@ -2630,12 +2639,25 @@ function renderTransactions() {
     const dateStr = d.toLocaleDateString('fr-FR', { day:'numeric', month:'short', year:'numeric' });
     const timeStr = d.toLocaleTimeString('fr-FR', { hour:'2-digit', minute:'2-digit' });
     const delay = Math.min(i * 45, 400);
-    const detail = isEdit
-      ? `${tx.qty} titres · PRU ${fmtPrice(tx.price)}${tx.oldQty !== tx.qty ? ` (était ${tx.oldQty})` : ''}${tx.oldPrice !== tx.price ? ` / ${fmtPrice(tx.oldPrice)}` : ''} · ${_esc(tx.accountName)}`
-      : `${tx.qty} × ${fmtPrice(tx.price)} · ${_esc(tx.accountName)}`;
-    const valHtml = isEdit
-      ? `<div class="tx-val" style="color:var(--accent2)">${fmtEur(val)}</div>`
-      : `<div class="tx-val" style="color:${iconColor}">${isBuy ? '+' : '-'}${fmtEur(val)}</div>`;
+    const inv = MoobankCore.transactionInvestment(tx);
+    let detail, valHtml;
+    if (isEdit) {
+      const known = Number.isFinite(tx.oldQty) && Number.isFinite(tx.oldPrice);
+      const dQty = known ? tx.qty - tx.oldQty : null;
+      const qtyTxt = known && dQty !== 0 ? `${tx.qty} titres (${dQty > 0 ? '+' : ''}${fmtQty(dQty)})` : `${tx.qty} titres`;
+      const pruTxt = known && tx.oldPrice > 0 && tx.oldPrice !== tx.price
+        ? `PRU ${fmtPrice(tx.oldPrice)} → ${fmtPrice(tx.price)}` : `PRU ${fmtPrice(tx.price)}`;
+      detail = `${qtyTxt} · ${pruTxt} · ${_esc(tx.accountName)}`;
+      if (inv.kind === 'invest') {
+        valHtml = `<div class="tx-val" style="color:var(--accent)">+${fmtEur(inv.amount)}</div>`;
+      } else {
+        const label = inv.kind === 'correction' ? 'correction' : 'apport inconnu';
+        valHtml = `<div class="tx-val" style="color:var(--muted);font-size:0.72rem">${label}</div>`;
+      }
+    } else {
+      detail = `${tx.qty} × ${fmtPrice(tx.price)} · ${_esc(tx.accountName)}`;
+      valHtml = `<div class="tx-val" style="color:${iconColor}">${isBuy ? '+' : '-'}${fmtEur(val)}</div>`;
+    }
     return `<div class="tx-item" style="animation-delay:${delay}ms">
       <div class="tx-icon ${iconClass}" style="color:${iconColor};${isEdit ? 'background:rgba(0,112,243,0.1);font-size:0.8rem' : ''}">${icon}</div>
       <div class="tx-info">
@@ -3819,6 +3841,7 @@ function getSortedPositions() {
 }
 // ─── EDIT POSITION ────────────────────────────────────────────────────────────
 let editingPositionId = null;
+let editMode = 'buy';
 
 function openEditPosition(id) {
   const p = positions.find(p => p.id === id);
@@ -3826,9 +3849,79 @@ function openEditPosition(id) {
   editingPositionId = id;
   document.getElementById('editPosTitle').textContent = p.symbol + (p.name ? ' — ' + p.name : '');
   document.getElementById('editPosSubtitle').textContent = getAccountName(p.accountId);
+  document.getElementById('editCurrent').textContent =
+    `Actuellement : ${fmtQty(p.qty)} titres · PRU ${p.price > 0 ? fmtPrice(p.price) : 'inconnu'}`;
   document.getElementById('edit-pos-qty').value = p.qty;
   document.getElementById('edit-pos-price').value = p.price > 0 ? p.price : '';
-  showDialog(document.getElementById('editPositionModal'), '#edit-pos-qty');
+  document.getElementById('edit-buy-qty').value = '';
+  document.getElementById('edit-buy-price').value = '';
+  document.getElementById('edit-buy-fees').value = '';
+  // Mode « J'ai acheté » par défaut ; impossible si le PRU actuel est inconnu.
+  setEditMode(p.price > 0 ? 'buy' : 'total');
+  showDialog(document.getElementById('editPositionModal'), editMode === 'buy' ? '#edit-buy-qty' : '#edit-pos-qty');
+}
+
+function fmtQty(q) {
+  return q >= 1000 ? _fmtQty.format(q) : fmt(q, q % 1 === 0 ? 0 : q < 0.001 ? 8 : 4);
+}
+
+function setEditMode(mode) {
+  const p = positions.find(p => p.id === editingPositionId);
+  if (mode === 'buy' && p && !(p.price > 0)) mode = 'total';
+  editMode = mode;
+  const buy = mode === 'buy';
+  document.getElementById('editPaneBuy').classList.toggle('hidden', !buy);
+  document.getElementById('editPaneTotal').classList.toggle('hidden', buy);
+  for (const [id, active] of [['editModeBuy', buy], ['editModeTotal', !buy]]) {
+    const el = document.getElementById(id);
+    el.classList.toggle('active', active);
+    el.setAttribute('aria-selected', String(active));
+  }
+  document.getElementById('editModeBuy').disabled = !!(p && !(p.price > 0));
+  updateEditPreview();
+}
+
+// Renvoie { qty, price, invested } selon le mode, ou { error } / null (rien saisi).
+function computeEditTarget() {
+  const p = positions.find(p => p.id === editingPositionId);
+  if (!p) return null;
+  if (editMode === 'buy') {
+    const bought = parseFloat(document.getElementById('edit-buy-qty').value);
+    const buyPrice = parseFloat(document.getElementById('edit-buy-price').value);
+    const fees = parseFloat(document.getElementById('edit-buy-fees').value) || 0;
+    if (!(bought > 0) || !Number.isFinite(buyPrice)) return null;
+    const r = MoobankCore.computeReinforcement({ qty: p.qty, pru: p.price, bought, buyPrice, fees });
+    return r || { error: 'Saisie invalide' };
+  }
+  const qty = parseFloat(document.getElementById('edit-pos-qty').value);
+  const price = parseFloat(document.getElementById('edit-pos-price').value) || 0;
+  if (!(qty > 0)) return { error: 'Quantité invalide' };
+  const inv = p.price > 0 && price > 0 ? qty * price - p.qty * p.price : null;
+  return { qty: parseFloat(qty.toFixed(8)), price: parseFloat(price.toFixed(10)), invested: inv };
+}
+
+function updateEditPreview() {
+  const el = document.getElementById('editPreview');
+  const p = positions.find(p => p.id === editingPositionId);
+  if (!el || !p) return;
+  const t = computeEditTarget();
+  if (!t) { el.innerHTML = ''; return; }
+  if (t.error) { el.innerHTML = `<span style="color:var(--loss)">${_esc(t.error)}</span>`; return; }
+  const dQty = t.qty - p.qty;
+  const dQtyTxt = dQty === 0 ? '' : ` (${dQty > 0 ? '+' : ''}${fmtQty(dQty)})`;
+  const pruTxt = t.price > 0 ? fmtPrice(t.price) : 'inconnu';
+  let inv = '';
+  if (t.invested !== null && t.invested !== undefined && dQty > 0 && t.invested > 0) {
+    inv = `<div class="edit-preview-row"><span>Apport</span><strong style="color:var(--accent)">+${fmtEur(t.invested)}</strong></div>`;
+  } else if (editMode === 'total' && t.invested === null) {
+    inv = `<div class="edit-preview-row"><span>Apport</span><span>non calculable (PRU inconnu)</span></div>`;
+  } else if (editMode === 'total') {
+    inv = `<div class="edit-preview-row"><span>Apport</span><span>aucun — sera noté comme correction</span></div>`;
+  }
+  el.innerHTML = `
+    <div class="edit-preview-row"><span>Nouvelle quantité</span><strong>${fmtQty(t.qty)}${dQtyTxt}</strong></div>
+    <div class="edit-preview-row"><span>Nouveau PRU</span><strong>${pruTxt}</strong></div>
+    ${inv}`;
 }
 
 function closeEditPosition() {
@@ -3839,8 +3932,10 @@ function closeEditPosition() {
 async function confirmEditPosition() {
   const p = positions.find(p => p.id === editingPositionId);
   if (!p) return;
-  const qty = parseFloat(document.getElementById('edit-pos-qty').value);
-  const price = parseFloat(document.getElementById('edit-pos-price').value) || 0;
+  const t = computeEditTarget();
+  if (!t) return alert(editMode === 'buy' ? 'Renseigne les titres achetés et le prix d\'achat' : 'Quantité invalide');
+  if (t.error) return alert(t.error);
+  const qty = t.qty, price = t.price;
   if (!qty || qty <= 0) return alert('Quantité invalide');
   const btn = document.getElementById('editPositionSaveBtn');
   btn.disabled = true;
@@ -3875,6 +3970,7 @@ async function confirmEditPosition() {
   btn.disabled = false;
   closeEditPosition();
   renderPositions(); renderAllocation(); renderSummary();
+  if (typeof renderTransactions === 'function') renderTransactions();
   refreshProjectionIfActive();
   showToast('✅ Position mise à jour', 'success');
 }
@@ -3956,6 +4052,6 @@ window.App.authRecoveryVersion = '2026-08-28.1';
 for (const k of ['openMobileActions', 'closeMobileActions', 'runMobileAction']) {
   window.App[k] = window[k];
 }
-for (const k of ['addAccount', 'cancelAddPrel', 'cancelLivretEdit', 'closeEditPosition', 'closeGoalModal', 'closeModal', 'confirmAddPrel', 'confirmEditPosition', 'confirmEditPrel', 'confirmLivretSolde', 'confirmPosition', 'deleteAccount', 'deleteGoal', 'deletePosition', 'deletePrel', 'editGoal', 'editLivretSolde', 'editPrel', 'exportDataBackup', 'openAddGoal', 'openAddPrel', 'openEditPosition', 'openModal', 'refreshAllPrices', 'renderPrelevements', 'retryCachedDataSync', 'saveGoal', 'selectGoalEmoji', 'selectTickerByIndex', 'setAllocationMode', 'setChartPeriod', 'setPosSide', 'setTrajectoryYears', 'signOut', 'simNormalizeContribution', 'simNormalizeRate', 'simResetContributions', 'simResetRates', 'simSetContribution', 'simSetRate', 'sortPositions', 'switchPosTab', 'switchTab', 'toggleAll', 'toggleMobilePositionCard', 'toggleType']) {
+for (const k of ['addAccount', 'cancelAddPrel', 'cancelLivretEdit', 'closeEditPosition', 'closeGoalModal', 'closeModal', 'confirmAddPrel', 'confirmEditPosition', 'confirmEditPrel', 'confirmLivretSolde', 'confirmPosition', 'deleteAccount', 'deleteGoal', 'deletePosition', 'deletePrel', 'editGoal', 'editLivretSolde', 'editPrel', 'exportDataBackup', 'openAddGoal', 'openAddPrel', 'openEditPosition', 'openModal', 'refreshAllPrices', 'renderPrelevements', 'retryCachedDataSync', 'saveGoal', 'selectGoalEmoji', 'selectTickerByIndex', 'setAllocationMode', 'setEditMode', 'updateEditPreview', 'setChartPeriod', 'setPosSide', 'setTrajectoryYears', 'signOut', 'simNormalizeContribution', 'simNormalizeRate', 'simResetContributions', 'simResetRates', 'simSetContribution', 'simSetRate', 'sortPositions', 'switchPosTab', 'switchTab', 'toggleAll', 'toggleMobilePositionCard', 'toggleType']) {
   if (typeof window[k] === 'function') window.App[k] = window[k];
 }
