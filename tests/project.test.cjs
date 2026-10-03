@@ -58,7 +58,7 @@ test('la nouvelle identité transparente est utilisée par le site et la PWA', (
   assert.match(worker, /assets\/css\/v2\.css/);
   assert.doesNotMatch(mark, /<rect\b/i);
   assert.equal(manifest.name, 'Moobank — Patrimoine');
-  assert.equal(JSON.parse(read('version.json')).version, '2.5.0');
+  assert.equal(JSON.parse(read('version.json')).version, '2.6.0');
 });
 
 test('la synthèse remplace le doublon des poches par le classement des mouvements du jour', () => {
@@ -321,7 +321,7 @@ test('les versions publiques et les ressources versionnées sont cohérentes', (
   const version = JSON.parse(read('version.json')).version;
   const pkg = JSON.parse(read('package.json'));
   const lock = JSON.parse(read('package-lock.json'));
-  assert.equal(version, '2.5.0');
+  assert.equal(version, '2.6.0');
   assert.equal(pkg.version, version);
   assert.equal(lock.version, version);
   assert.equal(lock.packages[''].version, version);
