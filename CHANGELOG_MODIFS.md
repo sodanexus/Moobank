@@ -1,3 +1,14 @@
+# Moobank 2.6.0 — pensé pour le DCA buy and hold
+
+- modale de modification en deux modes : **J'ai acheté** (titres + prix + frais optionnels → nouvelle quantité et nouveau PRU calculés) et **Totaux Boursobank** (saisie directe comme avant) ;
+- aperçu en direct avant validation : nouvelle quantité, nouveau PRU, apport ;
+- historique des mouvements : l'apport réellement investi est affiché pour chaque modification (calculé depuis l'ancienne quantité/PRU déjà enregistrés, y compris pour les anciens mouvements) ;
+- modifications sans achat (correction de PRU) et mouvements sans ancien PRU marqués « correction » / « apport inconnu » ;
+- fraîcheur des lignes : « mis à jour il y a N j » sous chaque position, avec un point d'alerte à partir de 35 jours ;
+- aucune modification de Supabase ni des données enregistrées.
+
+---
+
 # Moobank 2.5.0 — portefeuille mobile et filet de sécurité
 
 - taux USD/EUR réintroduit discrètement sur mobile, sans rétablir l’ancien en-tête encombrant ;

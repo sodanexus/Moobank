@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <title>Moobank — Patrimoine</title>
 <meta name="description" content="Moobank, le tableau de bord privé pour comprendre, organiser et suivre son patrimoine.">
-<meta name="moobank-version" content="2.5.0">
+<meta name="moobank-version" content="2.6.0">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -14,11 +14,11 @@
 <meta name="robots" content="noindex, nofollow, noarchive, nosnippet">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="icon" type="image/svg+xml" href="./assets/brand/moobank-mark.svg">
-<link rel="manifest" href="manifest.json?v=2.5.0">
+<link rel="manifest" href="manifest.json?v=2.6.0">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Plus+Jakarta+Sans:wght@400;600;700;800&family=DM+Mono:wght@300;400;500&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.115.0" crossorigin="anonymous"></script>
-<link rel="stylesheet" href="./assets/css/app.css?v=2.5.0">
-<link rel="stylesheet" href="./assets/css/v2.css?v=2.5.0">
+<link rel="stylesheet" href="./assets/css/app.css?v=2.6.0">
+<link rel="stylesheet" href="./assets/css/v2.css?v=2.6.0">
 </head>
 <body>
   <!-- OFFLINE BANNER -->
@@ -554,9 +554,9 @@
 
   </div><!-- end tab-simulator -->
 
-<script src="./assets/js/core.js?v=2.5.0"></script>
-<script src="./assets/js/trajectory-core.js?v=2.5.0"></script>
-<script src="./assets/js/app.js?v=2.5.0"></script>
+<script src="./assets/js/core.js?v=2.6.0"></script>
+<script src="./assets/js/trajectory-core.js?v=2.6.0"></script>
+<script src="./assets/js/app.js?v=2.6.0"></script>
 
 </div><!-- end .app -->
 
@@ -655,16 +655,41 @@
       <div style="font-size:0.75rem;color:var(--muted);margin-top:2px" id="editPosSubtitle"></div>
     </div>
 
-    <div class="form-row">
-      <label for="edit-pos-qty">Quantité</label>
-      <input type="number" id="edit-pos-qty" step="any" min="0">
+    <div class="edit-mode-switch" role="tablist" aria-label="Mode de saisie">
+      <button type="button" class="edit-mode-btn active" id="editModeBuy" role="tab" aria-selected="true" onclick="setEditMode('buy')">J'ai acheté</button>
+      <button type="button" class="edit-mode-btn" id="editModeTotal" role="tab" aria-selected="false" onclick="setEditMode('total')">Totaux Boursobank</button>
     </div>
 
-    <div class="form-row">
-      <label for="edit-pos-price">PRU — Prix de Revient Unitaire (€)</label>
-      <input type="number" id="edit-pos-price" step="any" min="0">
-      <div class="form-hint">Laisser à 0 si le PRU est inconnu</div>
+    <div class="edit-current" id="editCurrent"></div>
+
+    <div id="editPaneBuy">
+      <div class="form-row">
+        <label for="edit-buy-qty">Titres achetés</label>
+        <input type="number" id="edit-buy-qty" step="any" min="0" inputmode="decimal" oninput="updateEditPreview()">
+      </div>
+      <div class="form-row">
+        <label for="edit-buy-price">Prix d'achat unitaire (€)</label>
+        <input type="number" id="edit-buy-price" step="any" min="0" inputmode="decimal" oninput="updateEditPreview()">
+      </div>
+      <div class="form-row">
+        <label for="edit-buy-fees">Frais (€) — optionnel</label>
+        <input type="number" id="edit-buy-fees" step="any" min="0" inputmode="decimal" placeholder="0" oninput="updateEditPreview()">
+      </div>
     </div>
+
+    <div id="editPaneTotal" class="hidden">
+      <div class="form-row">
+        <label for="edit-pos-qty">Quantité totale</label>
+        <input type="number" id="edit-pos-qty" step="any" min="0" inputmode="decimal" oninput="updateEditPreview()">
+      </div>
+      <div class="form-row">
+        <label for="edit-pos-price">PRU — Prix de Revient Unitaire (€)</label>
+        <input type="number" id="edit-pos-price" step="any" min="0" inputmode="decimal" oninput="updateEditPreview()">
+        <div class="form-hint">Laisser à 0 si le PRU est inconnu</div>
+      </div>
+    </div>
+
+    <div class="edit-preview" id="editPreview" aria-live="polite"></div>
 
     <div class="form-actions">
       <button type="button" class="btn" onclick="closeEditPosition()">Annuler</button>
@@ -765,6 +790,6 @@
   </div>
 </div>
 
-<script src="./assets/js/history-import.js?v=2.5.0"></script>
+<script src="./assets/js/history-import.js?v=2.6.0"></script>
 </body>
 </html>
