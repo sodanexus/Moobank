@@ -450,6 +450,8 @@ body::before {
 .account-perf { font-size: .7rem; }
 .tag { border-radius: 6px; font-weight: 650; }
 .positions-table { min-width: 860px; }
+/* Keep the actions inside a real table cell so row separators stay continuous. */
+.position-row-actions { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
 .position-mobile-list { display: none; }
 th { color: var(--muted); font-size: .63rem; }
 td { padding-top: 12px; padding-bottom: 12px; }

@@ -1744,7 +1744,7 @@ function renderPositions() {
       <td class="pnl">${pnlDisplay}</td>
       <td>${pctDisplay}</td>
       <td>${sparklineSVG(hist,sparkColor)}</td>
-      <td style="display:flex;gap:6px;align-items:center"><button class="del-btn" style="background:rgba(0,229,160,0.08);color:var(--accent);border-color:rgba(0,229,160,0.2)" onclick="openEditPosition('${p.id}');event.stopPropagation()">✏️</button><button class="del-btn" onclick="deletePosition('${p.id}');event.stopPropagation()">✕</button></td>
+      <td><div class="position-row-actions"><button class="del-btn" style="background:rgba(0,229,160,0.08);color:var(--accent);border-color:rgba(0,229,160,0.2)" onclick="openEditPosition('${p.id}');event.stopPropagation()">✏️</button><button class="del-btn" onclick="deletePosition('${p.id}');event.stopPropagation()">✕</button></div></td>
     </tr>`;
     const card = `<article class="position-mobile-card" id="mobile-position-${p.id}">
       <button type="button" class="position-mobile-summary" aria-expanded="false" aria-controls="mobile-position-details-${p.id}" onclick="toggleMobilePositionCard('${p.id}')">
