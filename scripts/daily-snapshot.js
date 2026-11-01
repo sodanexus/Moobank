@@ -44,12 +44,9 @@ if (USER_IDS.length === 0) {
   process.exit(1);
 }
 
-// Le workflow est déclenché à 22 h et 23 h UTC pour couvrir heure d'été et
-// heure d'hiver. Une seule exécution correspond à minuit à Paris.
-if (process.env.GITHUB_EVENT_NAME === 'schedule' && parisNow.hour !== '00') {
-  console.log(`Exécution ignorée : il est ${parisNow.hour} h à Paris.`);
-  process.exit(0);
-}
+// Les deux passages quotidiens restent autorisés en cas de retard GitHub Actions.
+// La date est celle du lancement à Paris. L'upsert utilisateur/date permet
+// au second passage de mettre à jour le point du jour sans créer de doublon.
 
 const sb = createClient(SUPA_URL, SUPA_KEY, {
   auth: { persistSession: false, autoRefreshToken: false }
