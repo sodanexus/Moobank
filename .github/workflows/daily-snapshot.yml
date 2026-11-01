@@ -2,10 +2,11 @@ name: Moobank — snapshot quotidien
 
 on:
   schedule:
-    # Deux créneaux UTC couvrent automatiquement les changements d’heure.
-    # Le script n’écrit que pendant l’exécution correspondant à minuit à Paris.
-    - cron: '15 22 * * *'
-    - cron: '15 23 * * *'
+    # Deux passages chaque jour, autorisés même si GitHub démarre en retard.
+    # Paris : 03 h 15 / 06 h 15 en hiver, 04 h 15 / 07 h 15 en été.
+    # Le second passage met à jour le même point quotidien (upsert).
+    - cron: '15 2 * * *'
+    - cron: '15 5 * * *'
   workflow_dispatch: # permet un lancement manuel depuis GitHub
 
 permissions:
