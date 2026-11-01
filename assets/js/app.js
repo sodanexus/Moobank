@@ -2397,196 +2397,189 @@ function buildInterpolatedSeries(data, startDate, endDate) {
   return result;
 }
 
+// Courbe monotone : chaque intervalle reste entre ses deux mesures, sans pic inventé.
+function wealthCurve(points) {
+  const n = points.length;
+  const slopes = points.slice(1).map((p, i) => (p.y - points[i].y) / (p.x - points[i].x));
+  const tangents = points.map((p, i) => {
+    if (!i) return slopes[0] || 0;
+    if (i === n - 1) return slopes[n - 2] || 0;
+    const a = slopes[i - 1], b = slopes[i];
+    if (a * b <= 0) return 0;
+    const h0 = p.x - points[i - 1].x, h1 = points[i + 1].x - p.x;
+    const w1 = 2 * h1 + h0, w2 = h1 + 2 * h0;
+    return (w1 + w2) / (w1 / a + w2 / b);
+  });
+  return x => {
+    if (x <= points[0].x) return points[0].y;
+    if (x >= points[n - 1].x) return points[n - 1].y;
+    let lo = 0, hi = n - 1;
+    while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (points[mid].x <= x) lo = mid; else hi = mid; }
+    const h = points[hi].x - points[lo].x, t = (x - points[lo].x) / h;
+    return (2*t*t*t - 3*t*t + 1)*points[lo].y + (t*t*t - 2*t*t + t)*h*tangents[lo]
+      + (-2*t*t*t + 3*t*t)*points[hi].y + (t*t*t - t*t)*h*tangents[hi];
+  };
+}
+
+let _wealthChartFrame = 0;
+let _wealthChartVisual = null;
+let _wealthChartObserver = null;
+let _wealthChartSignature = '';
+
 function renderChart() {
   const wrap = document.getElementById('chartWrap');
-  const emptyEl = document.getElementById('chartEmpty');
-  const rawData = filterChartData(patrimoineHistory, currentChartPeriod);
-
-  // Remove old SVG and single-point state
-  // (interp note cleanup is handled below via wrap.parentElement.querySelectorAll)
-  const oldSvg = wrap.querySelector('svg.chart-svg');
-  if (oldSvg) oldSvg.remove();
-  const oldSingle = wrap.querySelector('.chart-single-point');
-  if (oldSingle) oldSingle.remove();
-
-  if (rawData.length < 1 && computeTotalPatrimoine() <= 0) {
-    emptyEl.classList.remove('hidden');
-    return;
+  if (!wrap || !wrap.clientWidth) return;
+  if (!_wealthChartObserver && typeof ResizeObserver !== 'undefined') {
+    let previousWidth = wrap.clientWidth;
+    _wealthChartObserver = new ResizeObserver(() => {
+      if (wrap.clientWidth && Math.abs(wrap.clientWidth - previousWidth) > 1) {
+        previousWidth = wrap.clientWidth;
+        renderChart();
+      }
+    });
+    _wealthChartObserver.observe(wrap);
   }
-  emptyEl.classList.add('hidden');
-
-  // Build interpolated series
   const today = parisDateKey();
-  const startDate = rawData.length > 0 ? rawData[0].date : today;
-  const data = buildInterpolatedSeries(rawData, startDate, today);
+  const recorded = patrimoineHistory.filter(p => p.date <= today).slice().sort((a,b) => a.date.localeCompare(b.date));
+  const rawData = filterChartData(recorded, currentChartPeriod);
+  const liveValue = computeTotalPatrimoine();
+  // Une valeur actuelle sans sauvegarde reste explicitement identifiée comme telle.
+  const source = rawData.length ? rawData : liveValue > 0 ? [{date: today, value: liveValue}] : [];
+  const data = buildInterpolatedSeries(source, source[0]?.date, today).map(p => ({
+    ...p, live: p.date === today && !recorded.some(r => r.date === today)
+  }));
+  const W = wrap.clientWidth, H = W < 480 ? 250 : 280;
+  const signature = JSON.stringify([currentChartPeriod, W, data]);
+  if (signature === _wealthChartSignature) return;
+  _wealthChartSignature = signature;
+  cancelAnimationFrame(_wealthChartFrame);
+  wrap.querySelectorAll('.chart-svg,.chart-single-point').forEach(el => el.remove());
+  wrap.parentElement.querySelectorAll('.chart-interp-note').forEach(el => el.remove());
+  const tooltip = document.getElementById('chartTooltip');
+  const cursor = document.getElementById('chartCursor');
+  tooltip.style.opacity = cursor.style.opacity = '0';
+  const empty = document.getElementById('chartEmpty');
+  empty.classList.toggle('hidden', data.length > 0);
+  document.querySelectorAll('#chartPeriods .period-btn').forEach(btn => {
+    btn.setAttribute('aria-pressed', String(btn.textContent.trim() === currentChartPeriod));
+    btn.classList.toggle('active', btn.textContent.trim() === currentChartPeriod);
+  });
   if (data.length < 2) {
-    // Si un seul point (premier lancement aujourd'hui), afficher un état "début"
-    if (data.length === 1) {
-      emptyEl.classList.add('hidden');
-      const singleWrap = document.createElement('div');
-      singleWrap.className = 'chart-single-point';
-      singleWrap.style.cssText = 'display:flex;flex-direction:column;align-items:center;justify-content:center;height:160px;gap:8px';
-      singleWrap.innerHTML = `
-        <div style="font-size:1.6rem">📍</div>
-        <div style="font-family:'Plus Jakarta Sans',sans-serif;font-weight:700;font-size:1.1rem">${fmtEur(data[0].value)}</div>
-        <div style="font-size:0.72rem;color:var(--muted)">Point de départ enregistré — le graphique s'enrichira à chaque visite</div>`;
-      wrap.insertBefore(singleWrap, wrap.querySelector('.chart-cursor'));
-    } else {
-      emptyEl.classList.remove('hidden');
+    _wealthChartVisual = null;
+    if (data.length) {
+      const single = document.createElement('div');
+      single.className = 'chart-single-point';
+      single.innerHTML = `<span class="wealth-start-dot"></span><strong>${fmtEur(data[0].value)}</strong><span>${data[0].live ? 'Valeur actuelle · pas encore sauvegardée' : 'Votre premier point enregistré'}</span><small>La courbe apparaîtra avec une deuxième date.</small>`;
+      wrap.insertBefore(single, cursor);
     }
     return;
   }
-
-  const hasEstimated = data.some(d => d.estimated);
-  const todayAlreadyInRaw = rawData.some(d => d.date === today); // today déjà défini plus haut
-  const realCount = rawData.length + (todayAlreadyInRaw ? 0 : 1); // +1 for today if not already present
-
-  const W = wrap.clientWidth || 800;
-  const H = 200;
-  const pad = { top: 16, right: 20, bottom: 32, left: W < 400 ? 48 : 60 };
-  const iW = W - pad.left - pad.right;
-  const iH = H - pad.top - pad.bottom;
-
-  const values = data.map(d => d.value);
-  const minV = Math.min(...values);
-  const maxV = Math.max(...values);
-  const range = maxV - minV || 1;
-
-  const xScale = (i) => pad.left + (i / (data.length - 1)) * iW;
-  const yScale = (v) => pad.top + iH - ((v - minV) / range) * iH;
-
-  const isGain = data[data.length-1].value >= data[0].value;
-  const lineColor = isGain ? '#55e6b1' : '#ff7189';
-  const gradId = 'chartGrad_' + Date.now();
-
-  // Build path: solid for real segments, dashed for interpolated
-  // We split the polyline into segments
-  let solidSegments = [];
-  let currentSeg = [];
-  let estimatedSegs = [];
-  let currentEstSeg = [];
-
-  data.forEach((d, i) => {
-    const pt = `${xScale(i)},${yScale(d.value)}`;
-    if (!d.estimated) {
-      currentSeg.push(pt);
-      if (currentEstSeg.length > 0) { estimatedSegs.push([...currentEstSeg]); currentEstSeg = []; }
-    } else {
-      currentEstSeg.push(pt);
-      if (currentSeg.length > 0) { solidSegments.push([...currentSeg]); currentSeg = []; }
-    }
+  const pad = {top: 22, right: 18, bottom: 34, left: W < 480 ? 56 : 76};
+  const iw = W-pad.left-pad.right, ih = H-pad.top-pad.bottom, base = H-pad.bottom;
+  const values = data.map(p => p.value), min = Math.min(...values), max = Math.max(...values);
+  const margin = Math.max((max-min)*.16, Math.abs(max)*.002, 1);
+  const low = Math.max(0, min-margin), high = max+margin;
+  const xAt = x => pad.left + x*iw;
+  const yAt = v => pad.top + (high-v)/(high-low)*ih;
+  const targetPoints = data.map((p,i) => ({x:i/(data.length-1), y:yAt(p.value)}));
+  const targetCurve = wealthCurve(targetPoints);
+  const old = _wealthChartVisual;
+  // Maillage dense, incluant CHAQUE date : la courbe traverse les valeurs exactes.
+  const xs = [...new Set([...Array.from({length:241},(_,i)=>i/240), ...targetPoints.map(p=>p.x)])].sort((a,b)=>a-b);
+  const fromCurve = old ? wealthCurve(old) : () => base;
+  const targetY = xs.map(x => targetCurve(x)), fromY = xs.map(x => fromCurve(x));
+  const estimatedEdge = xs.slice(1).map((x,i) => {
+    const k = Math.min(data.length-2, Math.floor(((xs[i]+x)/2)*(data.length-1)));
+    return data[k].estimated || data[k+1].estimated || data[k].live || data[k+1].live;
   });
-  if (currentSeg.length > 0) solidSegments.push(currentSeg);
-  if (currentEstSeg.length > 0) estimatedSegs.push(currentEstSeg);
-
-  // Build a combined area for gradient background
-  const baseY = pad.top + iH;
-  const areaPath = `M ${xScale(0)},${baseY} ` + data.map((d,i) => `L ${xScale(i)},${yScale(d.value)}`).join(' ') + ` L ${xScale(data.length-1)},${baseY} Z`;
-
-  // Real snapshots dots — use index directly, no indexOf
-  const realDots = data.map((d, i) => {
-    if (d.estimated) return '';
-    const x = xScale(i); const y = yScale(d.value);
-    return `<circle cx="${x}" cy="${y}" r="3.5" fill="${lineColor}" opacity="0.9"/>`;
-  }).join('');
-
-  // Y axis labels — format compact si petit écran
-  const yTicks = 4;
-  const useCompact = W < 400;
-  function fmtYAxis(v) {
-    if (!useCompact) return fmtEur(v).replace(/\s/g,'\u202F');
-    if (Math.abs(v) >= 1000000) return (v/1000000).toFixed(1) + 'M€';
-    if (Math.abs(v) >= 1000)    return (v/1000).toFixed(0) + 'k€';
-    return Math.round(v) + '€';
+  const color = values[values.length-1] >= values[0] ? '#55e6b1' : '#ff7189';
+  const compact = v => new Intl.NumberFormat('fr-FR', {notation:'compact',maximumFractionDigits:1}).format(v)+' €';
+  let axes = '';
+  for (let i=0;i<5;i++) {
+    const v = low+(high-low)*i/4, y=yAt(v);
+    axes += `<line x1="${pad.left}" x2="${W-pad.right}" y1="${y}" y2="${y}" class="wealth-grid"/><text x="${pad.left-10}" y="${y+3}" text-anchor="end">${compact(v)}</text>`;
   }
-  let yAxisHTML = '';
-  for (let i = 0; i <= yTicks; i++) {
-    const v = minV + (range * i / yTicks);
-    const y = yScale(v);
-    yAxisHTML += `<text x="${pad.left - 8}" y="${y + 4}" text-anchor="end" font-size="10" fill="#5a6478" font-family="DM Mono,monospace">${fmtYAxis(v)}</text>`;
-    yAxisHTML += `<line x1="${pad.left}" y1="${y}" x2="${pad.left + iW}" y2="${y}" stroke="#1e2530" stroke-width="1" stroke-dasharray="4,4"/>`;
+  const ticks = Math.min(data.length, W < 480 ? 3 : 5);
+  for(let i=0;i<ticks;i++) {
+    const k=Math.round(i/(ticks-1)*(data.length-1));
+    const label=new Date(data[k].date+'T12:00:00').toLocaleDateString('fr-FR',{day:'numeric',month:'short'});
+    axes += `<text x="${xAt(k/(data.length-1))}" y="${H-8}" text-anchor="${i===0?'start':i===ticks-1?'end':'middle'}">${label}</text>`;
   }
-
-  // X axis labels
-  let xAxisHTML = '';
-  const maxXLabels = Math.min(data.length, 6);
-  for (let i = 0; i < maxXLabels; i++) {
-    const idx = Math.round((i / (maxXLabels - 1)) * (data.length - 1));
-    const x = xScale(idx);
-    const d = new Date(data[idx].date + 'T12:00:00');
-    const label = d.toLocaleDateString('fr-FR', { day:'numeric', month:'short' });
-    xAxisHTML += `<text x="${x}" y="${H - 6}" text-anchor="middle" font-size="10" fill="#5a6478" font-family="DM Mono,monospace">${label}</text>`;
+  const svg = document.createElementNS('http://www.w3.org/2000/svg','svg');
+  svg.setAttribute('class','chart-svg wealth-chart');
+  svg.setAttribute('viewBox',`0 0 ${W} ${H}`);
+  svg.setAttribute('height',H);
+  svg.setAttribute('tabindex','0');
+  svg.setAttribute('role','group');
+  svg.setAttribute('aria-label',`Patrimoine sur ${currentChartPeriod}. Utilisez les flèches gauche et droite pour parcourir les dates.`);
+  svg.style.color=color;
+  svg.innerHTML=`<defs><linearGradient id="wealthFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="${color}" stop-opacity=".22"/><stop offset="100%" stop-color="${color}" stop-opacity=".01"/></linearGradient></defs><g class="wealth-axes">${axes}</g><path class="wealth-area" fill="url(#wealthFill)"/><path class="wealth-line wealth-line-solid"/><path class="wealth-line wealth-line-estimated"/><circle class="wealth-end-halo" r="7"/><circle class="wealth-end" r="3"/><circle class="wealth-selection" r="4.5" opacity="0"/>`;
+  wrap.insertBefore(svg,cursor);
+  const area=svg.querySelector('.wealth-area'), solid=svg.querySelector('.wealth-line-solid'), estimated=svg.querySelector('.wealth-line-estimated');
+  const ends=[svg.querySelector('.wealth-end'),svg.querySelector('.wealth-end-halo')];
+  let animating = true, selected = data.length-1;
+  const draw = progress => {
+    const ys=xs.map((x,i)=>fromY[i]+(targetY[i]-fromY[i])*progress);
+    const coords=xs.map((x,i)=>`${xAt(x).toFixed(2)},${ys[i].toFixed(2)}`);
+    area.setAttribute('d','M'+coords.join(' L')+` L${xAt(1)},${base} L${xAt(0)},${base} Z`);
+    let s='',e='';
+    estimatedEdge.forEach((isEstimated,i)=>{
+      const move=i===0 || estimatedEdge[i-1]!==isEstimated;
+      const segment=(move?'M'+coords[i]+' ':'')+'L'+coords[i+1]+' ';
+      if(isEstimated)e+=segment;else s+=segment;
+    });
+    solid.setAttribute('d',s);estimated.setAttribute('d',e);
+    ends.forEach(el=>{el.setAttribute('cx',xAt(1));el.setAttribute('cy',ys[ys.length-1]);});
+    _wealthChartVisual=xs.map((x,i)=>({x,y:ys[i]}));
+  };
+  const reduced=window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if(reduced){draw(1);animating=false;}else{
+    let start;
+    const tick=ts=>{
+      if(start===undefined)start=ts;
+      const t=Math.min(1,(ts-start)/(old?460:650));
+      draw(1-Math.pow(1-t,3));
+      if(t<1)_wealthChartFrame=requestAnimationFrame(tick);else animating=false;
+    };
+    draw(0);_wealthChartFrame=requestAnimationFrame(tick);
   }
-
-  const solidLines = solidSegments.map(seg =>
-    `<polyline points="${seg.join(' ')}" fill="none" stroke="${lineColor}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`
-  ).join('');
-  const estLines = estimatedSegs.map(seg =>
-    `<polyline points="${seg.join(' ')}" fill="none" stroke="${lineColor}" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="5,4" opacity="0.45"/>`
-  ).join('');
-
-  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-  svg.setAttribute('class', 'chart-svg');
-  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
-  svg.setAttribute('height', H);
-  svg.innerHTML = `
-    <defs>
-      <linearGradient id="${gradId}" x1="0" y1="0" x2="0" y2="1">
-        <stop offset="0%" stop-color="${lineColor}" stop-opacity="0.12"/>
-        <stop offset="100%" stop-color="${lineColor}" stop-opacity="0"/>
-      </linearGradient>
-    </defs>
-    ${yAxisHTML}${xAxisHTML}
-    <path d="${areaPath}" fill="url(#${gradId})"/>
-    ${estLines}
-    ${solidLines}
-    ${realDots}
-  `;
-
-  // Interaction: tooltip + cursor
-  svg.addEventListener('mousemove', (e) => {
-    const rect = wrap.getBoundingClientRect();
-    const mx = e.clientX - rect.left;
-    const idx = Math.max(0, Math.min(data.length - 1, Math.round(((mx - pad.left) / iW) * (data.length - 1))));
-    const pt = data[idx];
-    const x = xScale(idx);
-    const delta = pt.value - data[0].value;
-    const deltaPct = data[0].value > 0 ? (delta / data[0].value * 100) : 0;
-
-    const cursor = document.getElementById('chartCursor');
-    cursor.style.left = x + 'px';
-    cursor.style.top = (pad.top) + 'px';
-    cursor.style.height = iH + 'px';
-    cursor.style.opacity = '1';
-
-    const tt = document.getElementById('chartTooltip');
-    const dObj = new Date(pt.date + 'T12:00:00');
-    document.getElementById('ttDate').textContent = dObj.toLocaleDateString('fr-FR', { weekday:'short', day:'numeric', month:'long', year:'numeric' }) + (pt.estimated ? ' ~' : '');
-    document.getElementById('ttVal').textContent = fmtEur(pt.value) + (pt.estimated ? ' (estimé)' : '');
-    const ttDelta = document.getElementById('ttDelta');
-    ttDelta.textContent = (delta >= 0 ? '+' : '') + fmtEur(delta) + ' (' + (deltaPct >= 0 ? '+' : '') + fmt(deltaPct) + '%)';
-    ttDelta.style.color = delta >= 0 ? '#55e6b1' : '#ff7189';
-    tt.style.opacity = '1';
-    const ttX = Math.min(Math.max(x, 80), W - 80);
-    tt.style.left = ttX + 'px';
-    tt.style.top = (pad.top + 8) + 'px';
+  const marker=svg.querySelector('.wealth-selection');
+  const hide=()=>{tooltip.style.opacity=cursor.style.opacity='0';marker.setAttribute('opacity','0');};
+  const show=index=>{
+    if(animating)return;
+    selected=Math.max(0,Math.min(data.length-1,index));
+    const p=data[selected],x=xAt(selected/(data.length-1)), y=yAt(p.value),delta=p.value-data[0].value;
+    document.getElementById('ttDate').textContent=new Date(p.date+'T12:00:00').toLocaleDateString('fr-FR',{day:'numeric',month:'long',year:'numeric'});
+    document.getElementById('ttVal').textContent=fmtEur(p.value);
+    const status=p.live?'Actuel · non sauvegardé':p.estimated?'Estimation entre deux mesures':'Valeur enregistrée';
+    const pct=data[0].value>0?` (${delta>=0?'+':''}${fmt(delta/data[0].value*100)} %)` : '';
+    const detail=document.getElementById('ttDelta');
+    detail.textContent=status+' · '+(delta>=0?'+':'')+fmtEur(delta)+pct;
+    detail.style.color='var(--muted)';
+    cursor.style.cssText=`left:${x}px;top:${pad.top}px;height:${ih}px;opacity:1`;
+    marker.setAttribute('cx',x);marker.setAttribute('cy',y);marker.setAttribute('opacity','1');
+    tooltip.style.opacity='1';
+    const half=tooltip.offsetWidth/2;
+    tooltip.style.left=Math.max(half+4,Math.min(W-half-4,x))+'px';
+    tooltip.style.top=(y<pad.top+80?base-76:pad.top+2)+'px';
+  };
+  const point=e=>{const rect=svg.getBoundingClientRect();show(Math.round(((e.clientX-rect.left)*W/rect.width-pad.left)/iw*(data.length-1)));};
+  svg.addEventListener('pointermove',point);
+  svg.addEventListener('pointerdown',e=>{point(e);if(e.pointerType==='touch')svg.setPointerCapture(e.pointerId);});
+  svg.addEventListener('pointerup',e=>{if(svg.hasPointerCapture(e.pointerId))svg.releasePointerCapture(e.pointerId);});
+  svg.addEventListener('pointercancel',hide);
+  svg.addEventListener('pointerleave',hide);
+  svg.addEventListener('blur',hide);
+  svg.addEventListener('focus',()=>show(selected));
+  svg.addEventListener('keydown',e=>{
+    if(!['ArrowLeft','ArrowRight','Home','End','Escape'].includes(e.key))return;
+    e.preventDefault();e.stopPropagation();
+    if(e.key==='Escape')return hide();
+    show(e.key==='Home'?0:e.key==='End'?data.length-1:selected+(e.key==='ArrowLeft'?-1:1));
   });
-  svg.addEventListener('mouseleave', () => {
-    document.getElementById('chartTooltip').style.opacity = '0';
-    document.getElementById('chartCursor').style.opacity = '0';
-  });
-
-  wrap.insertBefore(svg, wrap.querySelector('.chart-cursor'));
-
-  // Note interpolation — remove any previous note first to avoid duplicates
-  wrap.parentElement.querySelectorAll('.chart-interp-note').forEach(el => el.remove());
-  if (hasEstimated && realCount < data.length) {
-    const note = document.createElement('div');
-    note.className = 'chart-interp-note';
-    note.style.cssText = 'font-size:0.62rem;color:var(--muted);text-align:right;margin-top:4px;padding:0 4px';
-    note.innerHTML = `<span style="opacity:0.6">— — interpolé</span> &nbsp; <span style="border-bottom:1.5px solid currentColor">——</span> mesure réelle · ${realCount} point${realCount>1?'s':''}`;
-    wrap.after(note);
-  }
+  const note=document.createElement('div');note.className='chart-interp-note wealth-chart-note';
+  note.textContent='Trait plein : enregistré'+(data.some(p=>p.estimated||p.live)?' · Pointillés : estimé ou actuel non sauvegardé':'')+' · '+(W<480?'Glissez sur la courbe':'Survolez pour explorer');
+  wrap.after(note);
 }
 
 // ─── TRANSACTIONS ─────────────────────────────────────────────────────────────

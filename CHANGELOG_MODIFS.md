@@ -1,3 +1,14 @@
+# Version 2.6.1 — Courbe de patrimoine
+
+- Tracé lissé monotone, passant par les mesures sans dépassement entre deux valeurs.
+- Transition de 460 ms entre périodes, interrompable sans accumulation d’animations.
+- Dégradé discret, axes aérés, indicateur de sélection et infobulle revue.
+- Interactions par pointeur (souris/tactile) et flèches du clavier.
+- Adaptation à la largeur disponible et à la préférence de réduction des animations.
+- Continuité des segments estimés ; valeur actuelle non sauvegardée explicitement identifiée.
+- Conservation du correctif des snapshots automatiques (deux passages et suppression du filtre horaire).
+- Vérification : syntaxe, 56 tests automatisés et scénarios DOM simulés. Rendu navigateur réel non vérifié dans cet environnement.
+
 # Moobank 2.6.0 — pensé pour le DCA buy and hold
 
 - modale de modification en deux modes : **J'ai acheté** (titres + prix + frais optionnels → nouvelle quantité et nouveau PRU calculés) et **Totaux Boursobank** (saisie directe comme avant) ;
